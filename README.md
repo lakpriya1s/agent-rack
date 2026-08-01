@@ -41,7 +41,15 @@ automatically and adds slash commands (`/agent-rack:run`, `/agent-rack:review`, 
 /reload-plugins
 ```
 
-For every other MCP client, no cloning, no config file to write by hand — just register it:
+For every other MCP client, no cloning, no config file to write by hand — just register it.
+Not sure which of `--target claude|codex|desktop` applies to you? Run the interactive wizard
+instead — it detects what's actually installed and asks before registering with each:
+
+```sh
+npx agent-rack setup
+```
+
+Or register with a specific target directly:
 
 ```sh
 npx agent-rack install --target claude     # Claude Code CLI
@@ -127,6 +135,32 @@ agent-rack start [-c, --config <path>] [-t, --transport stdio|sse] [-p, --port <
 Starts the MCP server. `--transport` defaults to `stdio` (or `config.transport`); `--port`
 defaults to `8765` (or `config.port`) and only applies to `sse`. This is what your MCP client
 actually runs in the background — you won't normally invoke it by hand.
+
+### `setup`
+
+```sh
+agent-rack setup
+```
+
+Interactive wizard: detects whether `claude` and `codex` are on `$PATH` and whether Claude
+Desktop is installed, then asks (y/n, default yes) before registering with each — using the
+exact same logic as `install --target <target>` under the hood, just without you having to know
+which target values exist. Clients it doesn't detect (Cursor, VS Code, Antigravity, etc.) get a
+pointer to `agent-rack snippet <client>` at the end.
+
+```
+Let's set up agent-rack.
+
+Register with Claude Code CLI? [Y/n] y
+Registering agent-rack with Claude Code CLI...
+✓ Successfully added agent-rack to Claude Code CLI!
+Register with Codex CLI? [Y/n] y
+Registering agent-rack with Codex CLI...
+✓ Successfully added agent-rack to Codex CLI!
+- Claude Desktop not found, skipping.
+
+Done. Restart the client(s) above to pick up the new tools.
+```
 
 ### `install`
 

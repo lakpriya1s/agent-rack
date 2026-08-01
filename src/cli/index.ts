@@ -2,10 +2,11 @@ import { Command } from 'commander';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import readline from 'readline';
 import { execa } from 'execa';
 import { startAgentMCPServer } from '../server.js';
 import { loadConfig, getDefaultConfig, saveConfig } from '../config/loader.js';
-import { listAgentAvailability } from '../engine/availability.js';
+import { listAgentAvailability, isBinaryAvailable } from '../engine/availability.js';
 
 /**
  * Path to the executable as MCP clients must spell it. Resolved from `process.argv[1]` — the
@@ -28,13 +29,78 @@ function buildMcpServerSnippet() {
   };
 }
 
+/** macOS's Claude Desktop config path — the only platform `registerDesktop` supports today. */
+function desktopConfigPath(): string {
+  return path.join(os.homedir(), 'Library/Application Support/Claude/claude_desktop_config.json');
+}
+
+async function registerClaude(binPath: string): Promise<void> {
+  try {
+    console.log('Registering agent-rack with Claude Code CLI...');
+    await execa('claude', ['mcp', 'add', 'agent-rack', '--', 'node', binPath, 'start'], { stdio: 'inherit' });
+    console.log('\n✓ Successfully added agent-rack to Claude Code CLI!');
+  } catch (err) {
+    console.error('✗ Failed to register with Claude Code CLI:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function registerCodex(binPath: string): Promise<void> {
+  try {
+    console.log('Registering agent-rack with Codex CLI...');
+    await execa('codex', ['mcp', 'add', 'agent-rack', '--', 'node', binPath, 'start'], { stdio: 'inherit' });
+    console.log('\n✓ Successfully added agent-rack to Codex CLI!');
+  } catch (err) {
+    console.error('✗ Failed to register with Codex CLI:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+function registerDesktop(): void {
+  const configPath = desktopConfigPath();
+  let desktopConfig: any = { mcpServers: {} };
+
+  try {
+    if (fs.existsSync(configPath)) {
+      desktopConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    }
+    desktopConfig.mcpServers = desktopConfig.mcpServers || {};
+    desktopConfig.mcpServers['agent-rack'] = buildMcpServerSnippet().mcpServers['agent-rack'];
+
+    const dir = path.dirname(configPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify(desktopConfig, null, 2), 'utf-8');
+    console.log(`\n✓ Successfully added agent-rack to Claude Desktop config at:\n  ${configPath}`);
+  } catch (err) {
+    console.error('✗ Failed to update Claude Desktop config:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Sequential y/n prompt for the setup wizard — avoids pulling in an interactive-prompt
+ * dependency. Takes a shared `readline.Interface` rather than creating one per call: creating a
+ * fresh interface for every question loses sync with piped/buffered stdin (each question's
+ * answer would never resolve past the first).
+ */
+function askYesNo(rl: readline.Interface, question: string, defaultYes: boolean): Promise<boolean> {
+  return new Promise((resolve) => {
+    const suffix = defaultYes ? '[Y/n]' : '[y/N]';
+    rl.question(`${question} ${suffix} `, (answer) => {
+      const normalized = answer.trim().toLowerCase();
+      if (!normalized) {
+        resolve(defaultYes);
+        return;
+      }
+      resolve(normalized === 'y' || normalized === 'yes');
+    });
+  });
+}
+
 export function runCLI() {
   const program = new Command();
 
   program
     .name('agent-rack')
     .description('Model Context Protocol (MCP) Server driving agy, claude, opencode, and CLI agents as MCP tools')
-    .version('0.1.3');
+    .version('0.1.4');
 
   program
     .command('start')
@@ -67,43 +133,68 @@ export function runCLI() {
       const binPath = resolveBinPath();
 
       if (options.target === 'claude') {
-        try {
-          console.log('Registering agent-rack with Claude Code CLI...');
-          await execa('claude', ['mcp', 'add', 'agent-rack', '--', 'node', binPath, 'start'], { stdio: 'inherit' });
-          console.log('\n✓ Successfully added agent-rack to Claude Code CLI!');
-        } catch (err) {
-          console.error('✗ Failed to register with Claude Code CLI:', err instanceof Error ? err.message : String(err));
-        }
+        await registerClaude(binPath);
       } else if (options.target === 'codex') {
-        try {
-          console.log('Registering agent-rack with Codex CLI...');
-          await execa('codex', ['mcp', 'add', 'agent-rack', '--', 'node', binPath, 'start'], { stdio: 'inherit' });
-          console.log('\n✓ Successfully added agent-rack to Codex CLI!');
-        } catch (err) {
-          console.error('✗ Failed to register with Codex CLI:', err instanceof Error ? err.message : String(err));
-        }
+        await registerCodex(binPath);
       } else if (options.target === 'desktop') {
-        const configPath = path.join(os.homedir(), 'Library/Application Support/Claude/claude_desktop_config.json');
-        let desktopConfig: any = { mcpServers: {} };
-
-        try {
-          if (fs.existsSync(configPath)) {
-            desktopConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-          }
-          desktopConfig.mcpServers = desktopConfig.mcpServers || {};
-          desktopConfig.mcpServers['agent-rack'] = buildMcpServerSnippet().mcpServers['agent-rack'];
-
-          const dir = path.dirname(configPath);
-          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(configPath, JSON.stringify(desktopConfig, null, 2), 'utf-8');
-          console.log(`\n✓ Successfully added agent-rack to Claude Desktop config at:\n  ${configPath}`);
-        } catch (err) {
-          console.error('✗ Failed to update Claude Desktop config:', err instanceof Error ? err.message : String(err));
-        }
+        registerDesktop();
       } else {
         console.log(`No automatic registration is available for target '${options.target}' yet.`);
         console.log(`Run \`agent-rack snippet ${options.target}\` to print the mcpServers JSON, then add it to that client's config by hand.`);
       }
+    });
+
+  program
+    .command('setup')
+    .description('Interactive wizard: detect installed clients and register agent-rack with each')
+    .action(async () => {
+      const binPath = resolveBinPath();
+      console.log("Let's set up agent-rack.\n");
+
+      const [hasClaude, hasCodex] = await Promise.all([isBinaryAvailable('claude'), isBinaryAvailable('codex')]);
+      const hasDesktop = fs.existsSync(path.dirname(desktopConfigPath()));
+
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      let registeredAny = false;
+
+      if (hasClaude) {
+        if (await askYesNo(rl, 'Register with Claude Code CLI?', true)) {
+          await registerClaude(binPath);
+          registeredAny = true;
+        }
+      } else {
+        console.log("- Claude Code CLI not found on $PATH, skipping.");
+      }
+
+      if (hasCodex) {
+        if (await askYesNo(rl, 'Register with Codex CLI?', true)) {
+          await registerCodex(binPath);
+          registeredAny = true;
+        }
+      } else {
+        console.log("- Codex CLI not found on $PATH, skipping.");
+      }
+
+      if (hasDesktop) {
+        if (await askYesNo(rl, 'Register with Claude Desktop?', true)) {
+          registerDesktop();
+          registeredAny = true;
+        }
+      } else {
+        console.log("- Claude Desktop not found, skipping.");
+      }
+
+      rl.close();
+
+      console.log(
+        registeredAny
+          ? '\nDone. Restart the client(s) above to pick up the new tools.'
+          : '\nNothing was registered.'
+      );
+      console.log(
+        "\nUsing a different MCP client (Cursor, VS Code, Antigravity, etc.)? Run " +
+          "`agent-rack snippet <client>` to print a config snippet to paste in by hand."
+      );
     });
 
   program
