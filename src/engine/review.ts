@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { execa } from 'execa';
 import { AgentTransportType } from '../config/schema.js';
 
 export const ReviewFindingSchema = z.object({
@@ -133,4 +134,34 @@ ${scopeInstruction}
 ${readOnlyInstruction}
 
 ${REVIEW_JSON_CONTRACT}`;
+}
+
+export interface GitPreCheckOptions {
+  workspace: string;
+  scope: 'working-tree' | 'branch';
+  baseRef?: string;
+}
+
+export async function hasChangesToReview(options: GitPreCheckOptions): Promise<boolean> {
+  const { workspace, scope, baseRef } = options;
+
+  if (scope === 'branch') {
+    if (!baseRef) {
+      throw new Error("baseRef is required when scope is 'branch'.");
+    }
+    const { stdout } = await execa('git', ['diff', '--shortstat', `${baseRef}...HEAD`], { cwd: workspace });
+    return stdout.trim().length > 0;
+  }
+
+  const [statusResult, diffResult, cachedDiffResult] = await Promise.all([
+    execa('git', ['status', '--short', '--untracked-files=all'], { cwd: workspace }),
+    execa('git', ['diff', '--shortstat'], { cwd: workspace }),
+    execa('git', ['diff', '--shortstat', '--cached'], { cwd: workspace }),
+  ]);
+
+  return (
+    statusResult.stdout.trim().length > 0 ||
+    diffResult.stdout.trim().length > 0 ||
+    cachedDiffResult.stdout.trim().length > 0
+  );
 }

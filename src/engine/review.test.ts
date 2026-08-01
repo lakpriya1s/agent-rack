@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { extractAndValidateReview, ReviewOutputSchema, getReadOnlyMode, buildReviewPrompt } from './review.js';
+import { execa } from 'execa';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { extractAndValidateReview, ReviewOutputSchema, getReadOnlyMode, buildReviewPrompt, hasChangesToReview } from './review.js';
 
 describe('ReviewOutputSchema', () => {
   it('accepts a fully valid review object', () => {
@@ -159,5 +163,71 @@ describe('buildReviewPrompt', () => {
     });
 
     expect(prompt).toContain('MUST be read-only');
+  });
+});
+
+async function makeTempGitRepo(): Promise<string> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mcp-review-'));
+  await execa('git', ['init'], { cwd: dir });
+  await execa('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+  await execa('git', ['config', 'user.name', 'Test'], { cwd: dir });
+  await execa('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: dir });
+  return dir;
+}
+
+describe('hasChangesToReview', () => {
+  it('returns false for working-tree scope with no changes', async () => {
+    const dir = await makeTempGitRepo();
+    try {
+      const result = await hasChangesToReview({ workspace: dir, scope: 'working-tree' });
+      expect(result).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns true for working-tree scope with an untracked file', async () => {
+    const dir = await makeTempGitRepo();
+    try {
+      fs.writeFileSync(path.join(dir, 'new-file.txt'), 'hello');
+      const result = await hasChangesToReview({ workspace: dir, scope: 'working-tree' });
+      expect(result).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns true for branch scope when HEAD differs from baseRef', async () => {
+    const dir = await makeTempGitRepo();
+    try {
+      const { stdout: baseRef } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
+      fs.writeFileSync(path.join(dir, 'change.txt'), 'change');
+      await execa('git', ['add', '.'], { cwd: dir });
+      await execa('git', ['commit', '-m', 'second commit'], { cwd: dir });
+
+      const result = await hasChangesToReview({ workspace: dir, scope: 'branch', baseRef });
+      expect(result).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns false for branch scope when HEAD equals baseRef', async () => {
+    const dir = await makeTempGitRepo();
+    try {
+      const result = await hasChangesToReview({ workspace: dir, scope: 'branch', baseRef: 'HEAD' });
+      expect(result).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws when scope is branch and baseRef is missing', async () => {
+    const dir = await makeTempGitRepo();
+    try {
+      await expect(hasChangesToReview({ workspace: dir, scope: 'branch' })).rejects.toThrow(/baseRef is required/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
