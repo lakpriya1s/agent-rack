@@ -7,6 +7,7 @@ interface HeaderProps {
   maxSessions: number;
   activeTab: 'sessions' | 'launcher' | 'system' | 'reviews';
   sanitizedEnv: boolean;
+  version?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -15,12 +16,13 @@ export const Header: React.FC<HeaderProps> = ({
   maxSessions,
   activeTab,
   sanitizedEnv,
+  version,
 }) => {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginBottom={0}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">
-          ⚡ AGENT-RACK DASHBOARD <Text color="gray">v0.2.0</Text>
+          ⚡ AGENT-RACK DASHBOARD {version && <Text color="gray">v{version}</Text>}
         </Text>
         <Text>
           Sessions: <Text bold color={activeSessions > 0 ? 'green' : 'yellow'}>{activeSessions}</Text> / {maxSessions}

@@ -9,6 +9,7 @@ import { startAgentMCPServer } from '../server.js';
 import { loadConfig, getDefaultConfig, saveConfig } from '../config/loader.js';
 import { listAgentAvailability, isBinaryAvailable } from '../engine/availability.js';
 import { handleCpCommand, copySkills } from './skills.js';
+import { getPackageVersion } from './version.js';
 
 /**
  * Path to the executable as MCP clients must spell it. Resolved from `process.argv[1]` — the
@@ -279,7 +280,7 @@ export function runCLI() {
   program
     .name('agent-rack')
     .description('Model Context Protocol (MCP) Server driving agy, claude, opencode, and CLI agents as MCP tools')
-    .version('0.1.9');
+    .version(getPackageVersion());
 
   program
     .command('start')

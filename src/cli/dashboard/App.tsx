@@ -14,9 +14,10 @@ import { computeLaunchAgentConfig } from './launch.js';
 interface AppProps {
   config: AgentMCPConfig;
   configPath?: string;
+  version?: string;
 }
 
-export const DashboardApp: React.FC<AppProps> = ({ config, configPath }) => {
+export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version }) => {
   const { exit } = useApp();
   const [sessionManager] = useState(() => new SessionManager(config));
   const [sessions, setSessions] = useState<AgentSession[]>([]);
@@ -125,6 +126,7 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath }) => {
         maxSessions={config.security.maxConcurrentSessions}
         activeTab={activeTab}
         sanitizedEnv={config.security.sanitizeEnv !== false}
+        version={version}
       />
 
       {activeTab === 'launcher' ? (
