@@ -1,5 +1,24 @@
 import { AgentAdapter, ParsedAgentEvent, FormattedResult } from './base.js';
 
+/**
+ * Valid values for Claude Code's `--permission-mode` flag (verified against CLI 2.1.220:
+ * `--permission-mode <mode>  (choices: "acceptEdits", "auto", "bypassPermissions",
+ * "manual", "dontAsk", "plan")`).
+ *
+ * Note: this adapter previously emitted `--mode <mode>`, which is not a Claude Code flag
+ * at all ("error: unknown option '--mode'"), so every read-only review against a
+ * claude_stream_json agent failed outright. `print` is likewise NOT a permission mode and
+ * is therefore no longer forwarded — passing it would have made the CLI exit non-zero.
+ */
+const CLAUDE_PERMISSION_MODES = new Set([
+  'acceptEdits',
+  'auto',
+  'bypassPermissions',
+  'manual',
+  'dontAsk',
+  'plan',
+]);
+
 export class ClaudeStreamJsonAdapter implements AgentAdapter {
   readonly transportType = 'claude_stream_json';
   private buffer = '';
@@ -9,8 +28,8 @@ export class ClaudeStreamJsonAdapter implements AgentAdapter {
   getCLIArgs(prompt: string, mode?: string): string[] {
     const args = [...this.defaultArgs];
 
-    if (mode === 'print' || mode === 'plan') {
-      args.push('--mode', mode);
+    if (CLAUDE_PERMISSION_MODES.has(mode ?? '')) {
+      args.push('--permission-mode', mode as string);
     }
 
     args.push(prompt);

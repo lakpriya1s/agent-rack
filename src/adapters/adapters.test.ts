@@ -19,6 +19,23 @@ describe('ClaudeStreamJsonAdapter', () => {
     expect(events[1].toolName).toBe('Edit');
   });
 
+  it('emits --permission-mode (not --mode) for plan mode', () => {
+    const adapter = new ClaudeStreamJsonAdapter(['--output-format', 'json']);
+    const args = adapter.getCLIArgs('review this', 'plan');
+
+    expect(args).toEqual(['--output-format', 'json', '--permission-mode', 'plan', 'review this']);
+    expect(args).not.toContain('--mode');
+  });
+
+  it('does not forward modes that are not valid Claude permission modes', () => {
+    const adapter = new ClaudeStreamJsonAdapter(['--output-format', 'json']);
+
+    // 'print' is not a --permission-mode choice; forwarding it would make the CLI exit non-zero.
+    expect(adapter.getCLIArgs('do it', 'print')).toEqual(['--output-format', 'json', 'do it']);
+    expect(adapter.getCLIArgs('do it', 'nonsense')).toEqual(['--output-format', 'json', 'do it']);
+    expect(adapter.getCLIArgs('do it')).toEqual(['--output-format', 'json', 'do it']);
+  });
+
   it('formats structured summary response', () => {
     const adapter = new ClaudeStreamJsonAdapter();
     const chunk = JSON.stringify({ type: 'text', text: 'Task completed successfully' }) + '\n' +
