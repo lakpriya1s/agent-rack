@@ -25,7 +25,9 @@ synchronously for one-shot tasks, or as background sessions with log streaming, 
 input, and cancellation.
 
 It also ships a structured, adversarial-capable **code review** tool
-(`agent_review`) that runs read-only and returns validated JSON instead of free text.
+(`agent_review`) that runs read-only and returns validated JSON instead of free text, plus
+[9 packaged commands and 2 auto-activated guidance skills](#skills) for Claude Code, Cursor, and
+Antigravity.
 
 ---
 
@@ -382,6 +384,53 @@ field, since it's already fixed:
 ```json
 // codex_run → { "prompt": "Add input validation to the signup form", "workspace": "/Users/you/project" }
 ```
+
+## Skills
+
+Everything above is reachable as raw MCP tool calls from any client. If you're on Claude Code,
+Cursor, or Antigravity specifically, agent-rack also ships **skills** — packaged, documented
+entry points on top of those same tools, so you don't have to remember exact parameter names.
+
+### Claude Code plugin — 9 commands
+
+Installed via the [Claude Code plugin](plugins/agent-rack/README.md)
+(`/plugin install agent-rack@agent-rack`). Each command is a thin wrapper around exactly one MCP
+tool — see [plugins/agent-rack/README.md](plugins/agent-rack/README.md) for full parameter docs
+and examples.
+
+| Command | Wraps | What it does |
+| --- | --- | --- |
+| `/agent-rack:run` | `agent_run` | Run a one-shot task synchronously with a named sub-agent |
+| `/agent-rack:review` | `agent_review` | Structured, read-only code review (normal or adversarial) |
+| `/agent-rack:session-start` | `agent_session_create` | Start a background sub-agent session |
+| `/agent-rack:session-status` | `agent_session_status` | Check a background session's status/summary |
+| `/agent-rack:session-send` | `agent_session_send` | Send follow-up input to a running session |
+| `/agent-rack:session-logs` | `agent_session_logs` | Read a session's raw event stream |
+| `/agent-rack:session-cancel` | `agent_session_cancel` | Stop a running session |
+| `/agent-rack:agents` | `agent_list_available` | List configured agents and `$PATH` availability |
+| `/agent-rack:setup` | — | Verify the MCP server is actually connected; troubleshoot if not |
+
+### Guidance skills — 2, auto-activated
+
+These aren't slash commands — they're model-invoked (`user-invocable: false`), meaning Claude
+reads them automatically based on context rather than you typing anything:
+
+| Skill | Activates when | What it teaches |
+| --- | --- | --- |
+| `agent-rack-tool-selection` | Delegating any task to a sub-agent through agent-rack | When to use synchronous `agent_run` vs. background `agent_session_create`; prefer the `<agentId>_run` shortcuts when the agent is already fixed |
+| `agent-rack-review-handling` | An `agent_review` call returns | How to present findings (severity order, `parseError` handling) and — critically — never auto-fix findings without asking first |
+
+Unlike the 9 commands (Claude Code plugin only), these two guidance skills also get **copied
+into other tools' own skill directories** when you register with them:
+
+| Target | Skills copied to |
+| --- | --- |
+| `agent-rack install --target cursor` | `~/.cursor/skills/agent-rack-{tool-selection,review-handling}/` (or `<project>/.cursor/skills/` with `--scope project`) |
+| `agent-rack install --target antigravity` | `~/.gemini/config/skills/agent-rack-{tool-selection,review-handling}/` |
+
+So a Cursor or Antigravity user gets the same "don't auto-fix review findings" guidance a Claude
+Code plugin user gets — just delivered as a plain copied skill file instead of a bundled plugin,
+since neither tool has a marketplace-style plugin format agent-rack can install through.
 
 ## Structured code review (`agent_review`)
 
