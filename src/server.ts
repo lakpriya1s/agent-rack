@@ -8,6 +8,7 @@ import { loadConfig } from './config/loader.js';
 import { SessionManager } from './engine/session.js';
 import { registerUnifiedTools, MCPToolDefinition } from './tools/unified.js';
 import { registerShortcutTools } from './tools/shortcuts.js';
+import { registerReviewTools } from './tools/review.js';
 
 export async function createAgentMCPServer(configPath?: string) {
   const { config, filePath } = loadConfig(configPath);
@@ -28,8 +29,9 @@ export async function createAgentMCPServer(configPath?: string) {
   const unifiedTools = registerUnifiedTools(config, sessionManager);
   const agentRunHandler = unifiedTools.find((t) => t.name === 'agent_run')!.handler;
   const shortcutTools = registerShortcutTools(config, agentRunHandler);
+  const reviewTools = registerReviewTools(config, sessionManager);
 
-  const allTools = [...unifiedTools, ...shortcutTools];
+  const allTools = [...unifiedTools, ...shortcutTools, ...reviewTools];
   const toolMap = new Map<string, MCPToolDefinition>();
   for (const tool of allTools) {
     toolMap.set(tool.name, tool);
