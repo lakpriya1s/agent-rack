@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractAndValidateReview, ReviewOutputSchema } from './review.js';
+import { extractAndValidateReview, ReviewOutputSchema, getReadOnlyMode, buildReviewPrompt } from './review.js';
 
 describe('ReviewOutputSchema', () => {
   it('accepts a fully valid review object', () => {
@@ -95,5 +95,69 @@ describe('extractAndValidateReview', () => {
     const review = extractAndValidateReview(raw);
     expect(review.parseError).toBe(true);
     expect(review.raw).toBe(raw);
+  });
+});
+
+describe('getReadOnlyMode', () => {
+  it('maps codex_exec_json to read-only sandbox mode', () => {
+    expect(getReadOnlyMode('codex_exec_json')).toBe('read-only');
+  });
+
+  it('maps claude_stream_json to plan mode', () => {
+    expect(getReadOnlyMode('claude_stream_json')).toBe('plan');
+  });
+
+  it('returns undefined for transports without a native read-only mode', () => {
+    expect(getReadOnlyMode('agy_stream')).toBeUndefined();
+    expect(getReadOnlyMode('pty_interactive')).toBeUndefined();
+  });
+});
+
+describe('buildReviewPrompt', () => {
+  it('builds a standard working-tree review prompt', () => {
+    const prompt = buildReviewPrompt({
+      scope: 'working-tree',
+      adversarial: false,
+      readOnlyEnforced: true,
+    });
+
+    expect(prompt).toContain('working-tree');
+    expect(prompt).toContain('git status');
+    expect(prompt).toContain('"verdict"');
+    expect(prompt).not.toContain('ADVERSARIAL');
+  });
+
+  it('builds a branch-scoped review prompt referencing the base ref', () => {
+    const prompt = buildReviewPrompt({
+      scope: 'branch',
+      baseRef: 'main',
+      adversarial: false,
+      readOnlyEnforced: true,
+    });
+
+    expect(prompt).toContain('main');
+    expect(prompt).toContain('git diff');
+  });
+
+  it('builds an adversarial prompt including the focus text', () => {
+    const prompt = buildReviewPrompt({
+      scope: 'working-tree',
+      adversarial: true,
+      focus: 'challenge the retry logic',
+      readOnlyEnforced: true,
+    });
+
+    expect(prompt).toContain('ADVERSARIAL');
+    expect(prompt).toContain('challenge the retry logic');
+  });
+
+  it('adds an explicit no-write instruction when read-only is not natively enforced', () => {
+    const prompt = buildReviewPrompt({
+      scope: 'working-tree',
+      adversarial: false,
+      readOnlyEnforced: false,
+    });
+
+    expect(prompt).toContain('MUST be read-only');
   });
 });
