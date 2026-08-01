@@ -90,194 +90,6 @@ agent-rack install --target claude
 - Whichever underlying CLI(s) you intend to run must be on `$PATH`: `claude`, `codex`,
   `opencode`, and/or `agy`. Check with `npx agent-rack agents`.
 
-## Configuration
-
-**Most people don't need this section.** With no config file present, `agent-rack`
-defaults to `allowedWorkspaces: [<the directory the server started in>]` and wires up all four
-agents automatically — nothing to write or edit.
-
-Reach for a config file only if you want to:
-- allow agents into more than one directory,
-- change the timeout, concurrency limit, or transport (`stdio` vs `sse`),
-- customize an agent's CLI flags, or point at a different binary.
-
-Config is resolved in this order (`src/config/loader.ts`):
-
-1. `$AGENT_RACK_CONFIG` env var
-2. `./agent-rack.config.json`
-3. `~/.config/agent-rack/config.json`
-4. The zero-config default described above
-
-To customize it, generate a real config scoped to your current directory (no placeholder paths
-to edit):
-
-```sh
-npx agent-rack config init
-```
-
-Or start from the fully-commented template if you want to see every option, including agent
-definitions:
-
-```sh
-cp agent-rack.config.example.json agent-rack.config.json
-```
-
-| Key | Description |
-| --- | --- |
-| `transport` | `stdio` (default, for local IDE integration) or `sse` (HTTP-SSE, for remote/mobile access) |
-| `port` | HTTP port when `transport` is `sse` |
-| `allowedWorkspaces` | Absolute directory paths agents are permitted to touch. Every tool call is validated against this list before any subprocess spawns — this is the entire security boundary. |
-| `agents` | Map of agent id → `{ name, command, args, transport, env, description }` |
-| `security.sanitizeEnv` | Strip env vars matching secret/password/token patterns before spawning agents (default `true`) |
-| `security.maxConcurrentSessions` | Cap on simultaneously running background sessions (default `5`) |
-| `security.defaultTimeoutSeconds` | Default execution timeout per run, in seconds (default `600`) |
-
-## CLI commands
-
-Running `agent-rack` with no subcommand at all is shorthand for `agent-rack start`.
-
-### `start`
-
-```sh
-agent-rack start [-c, --config <path>] [-t, --transport stdio|sse] [-p, --port <number>]
-```
-
-Starts the MCP server. `--transport` defaults to `stdio` (or `config.transport`); `--port`
-defaults to `8765` (or `config.port`) and only applies to `sse`. This is what your MCP client
-actually runs in the background — you won't normally invoke it by hand.
-
-### `setup`
-
-```sh
-agent-rack setup
-```
-
-Interactive wizard. First prints anything it detects in the **current project** — a `.claude`,
-`.cursor`, `.gemini`, `.agents`, or `.opencode` folder, mirroring what each of those tools itself
-looks for. Then, for each supported target, checks whether it's actually present (binary on
-`$PATH` for `claude`/`codex`/`opencode`, config directory existing for `desktop`/`cursor`/
-`antigravity`) and asks (y/n, default yes) before registering. For `claude` and `cursor`
-specifically — the two with a verified project-vs-global distinction — it asks a follow-up
-"just for this project?", defaulting to yes if that tool's project folder was detected, no
-otherwise. Everything else registers globally only. Clients it doesn't detect (VS Code, GitHub
-Copilot, etc.) get a pointer to `agent-rack snippet <client>` at the end.
-
-```
-Detected in this project (/Users/you/project):
-  Claude Code CLI  .claude
-  Cursor           .cursor
-
-Let's set up agent-rack.
-
-Register with Claude Code CLI? [Y/n] y
-  Just for this project (not globally)? [Y/n] y
-Registering agent-rack with Claude Code CLI (scope: project)...
-✓ Successfully added agent-rack to Claude Code CLI!
-Register with Codex CLI? [Y/n] y
-Registering agent-rack with Codex CLI...
-✓ Successfully added agent-rack to Codex CLI!
-- Claude Desktop not found, skipping.
-
-Done. Restart the client(s) above to pick up the new tools.
-```
-
-Needs a real interactive terminal (it asks yes/no questions on stdin) — over some SSH sessions,
-certain IDE-embedded terminals, or when output is piped/redirected, stdin isn't a TTY and this
-command exits with an error pointing you at the explicit `install --target` commands instead of
-silently doing nothing.
-
-### `install`
-
-```sh
-agent-rack install --target <target> [--scope project|user]   # default target: claude
-```
-
-| Target | What happens |
-| --- | --- |
-| `claude` | `claude mcp add agent-rack -- node <resolved-bin-path> start`. `--scope` maps directly to Claude Code's own `-s local\|user\|project` flag; omitted, it uses Claude Code's own default (`local` — tied to this exact directory, not shared). `project` writes a git-shareable `.mcp.json` in the project root; `user` is available in every project. |
-| `codex` | `codex mcp add agent-rack -- node <resolved-bin-path> start` (global only — codex has no project-scope flag). |
-| `desktop` | Merges an `mcpServers.agent-rack` entry into Claude Desktop's config (macOS only). |
-| `cursor` | Merges an `mcpServers.agent-rack` entry into Cursor's `mcp.json`, plus copies agent-rack's two guidance skills into Cursor's `skills/` directory. `--scope user` (default) writes to `~/.cursor/`; `--scope project` writes to `<project>/.cursor/` instead. |
-| `antigravity` (alias `agy`) | Merges an `mcpServers.agent-rack` entry into `~/.gemini/config/mcp_config.json` (Antigravity shares Gemini's config namespace) and copies the same two guidance skills into `~/.gemini/config/skills/`. Global only. |
-| `opencode` | Merges an `mcp.agent-rack` entry into opencode's config (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`) — note this target uses a different config shape (`{ type: "local", command: [...] }`) than the others. Global only. |
-| anything else | Prints a pointer to `agent-rack snippet <target>` instead of silently doing nothing. |
-
-```
-Registering agent-rack with Claude Code CLI...
-✓ Successfully added agent-rack to Claude Code CLI!
-```
-
-### `uninstall`
-
-```sh
-agent-rack uninstall --target <target> [--scope project|user]   # default target: claude
-```
-
-The inverse of `install`, target-for-target, with the same `--scope` semantics for `claude`/
-`cursor`. `desktop`/`cursor`/`antigravity`/`opencode` all back up their config file to a `.bak`
-alongside it before removing the `agent-rack` entry. Safe to run even if it was never
-installed — it reports "nothing to remove"/"no automatic removal" instead of failing. See
-[Uninstall](#uninstall) below.
-
-### `config init`
-
-```sh
-agent-rack config init [-p, --path ./agent-rack.config.json]
-```
-
-Writes a real config scoped to your current directory — all four default agents pre-filled
-with their actual CLI flags, `allowedWorkspaces` set to `process.cwd()` (not a placeholder).
-Only needed if you're customizing something (see [Configuration](#configuration)).
-
-### `config-check`
-
-```sh
-agent-rack config-check [-c, --config <path>]
-```
-
-Resolves config through the same precedence order the server uses, and prints it — or exits
-non-zero with the validation error if something's wrong.
-
-```
-✓ Configuration valid! Loaded from: /Users/you/project/agent-rack.config.json
-{
-  "transport": "stdio",
-  "allowedWorkspaces": ["/Users/you/project"],
-  ...
-}
-```
-
-### `agents`
-
-```sh
-agent-rack agents [-c, --config <path>]
-```
-
-Lists every configured agent and probes `$PATH` to confirm its binary is actually reachable.
-
-```
-Registered Agents Status:
-
- ✓ [claude] Claude Code CLI (claude) -> AVAILABLE
-   Transport: claude_stream_json
-   Args: --dangerously-skip-permissions --output-format json
-
- ✗ [codex] Codex CLI (codex) -> MISSING BINARY
-   Transport: codex_exec_json
-   Args: exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox
-```
-
-### `snippet`
-
-```sh
-agent-rack snippet <client>
-```
-
-Prints the `mcpServers` JSON block to paste into any MCP client's config by hand — for clients
-`install` doesn't automate (VS Code, GitHub Copilot, and anything else not listed in
-[`install`](#install)). `<client>` is just a label in the printed message; the JSON itself is
-identical for every client.
-
 ## MCP tools
 
 Two execution models, pick based on how long the task runs and whether you need to watch it:
@@ -499,6 +311,194 @@ resolution to block traversal) before anything spawns, and strips sensitive-look
 (`SECRET`, `PASSWORD`, `AUTH_TOKEN`, `PRIVATE_KEY` patterns) from the child's environment by
 default.
 
+## Configuration
+
+**Most people don't need this section.** With no config file present, `agent-rack`
+defaults to `allowedWorkspaces: [<the directory the server started in>]` and wires up all four
+agents automatically — nothing to write or edit.
+
+Reach for a config file only if you want to:
+- allow agents into more than one directory,
+- change the timeout, concurrency limit, or transport (`stdio` vs `sse`),
+- customize an agent's CLI flags, or point at a different binary.
+
+Config is resolved in this order (`src/config/loader.ts`):
+
+1. `$AGENT_RACK_CONFIG` env var
+2. `./agent-rack.config.json`
+3. `~/.config/agent-rack/config.json`
+4. The zero-config default described above
+
+To customize it, generate a real config scoped to your current directory (no placeholder paths
+to edit):
+
+```sh
+npx agent-rack config init
+```
+
+Or start from the fully-commented template if you want to see every option, including agent
+definitions:
+
+```sh
+cp agent-rack.config.example.json agent-rack.config.json
+```
+
+| Key | Description |
+| --- | --- |
+| `transport` | `stdio` (default, for local IDE integration) or `sse` (HTTP-SSE, for remote/mobile access) |
+| `port` | HTTP port when `transport` is `sse` |
+| `allowedWorkspaces` | Absolute directory paths agents are permitted to touch. Every tool call is validated against this list before any subprocess spawns — this is the entire security boundary. |
+| `agents` | Map of agent id → `{ name, command, args, transport, env, description }` |
+| `security.sanitizeEnv` | Strip env vars matching secret/password/token patterns before spawning agents (default `true`) |
+| `security.maxConcurrentSessions` | Cap on simultaneously running background sessions (default `5`) |
+| `security.defaultTimeoutSeconds` | Default execution timeout per run, in seconds (default `600`) |
+
+## CLI commands
+
+Running `agent-rack` with no subcommand at all is shorthand for `agent-rack start`.
+
+### `start`
+
+```sh
+agent-rack start [-c, --config <path>] [-t, --transport stdio|sse] [-p, --port <number>]
+```
+
+Starts the MCP server. `--transport` defaults to `stdio` (or `config.transport`); `--port`
+defaults to `8765` (or `config.port`) and only applies to `sse`. This is what your MCP client
+actually runs in the background — you won't normally invoke it by hand.
+
+### `setup`
+
+```sh
+agent-rack setup
+```
+
+Interactive wizard. First prints anything it detects in the **current project** — a `.claude`,
+`.cursor`, `.gemini`, `.agents`, or `.opencode` folder, mirroring what each of those tools itself
+looks for. Then, for each supported target, checks whether it's actually present (binary on
+`$PATH` for `claude`/`codex`/`opencode`, config directory existing for `desktop`/`cursor`/
+`antigravity`) and asks (y/n, default yes) before registering. For `claude` and `cursor`
+specifically — the two with a verified project-vs-global distinction — it asks a follow-up
+"just for this project?", defaulting to yes if that tool's project folder was detected, no
+otherwise. Everything else registers globally only. Clients it doesn't detect (VS Code, GitHub
+Copilot, etc.) get a pointer to `agent-rack snippet <client>` at the end.
+
+```
+Detected in this project (/Users/you/project):
+  Claude Code CLI  .claude
+  Cursor           .cursor
+
+Let's set up agent-rack.
+
+Register with Claude Code CLI? [Y/n] y
+  Just for this project (not globally)? [Y/n] y
+Registering agent-rack with Claude Code CLI (scope: project)...
+✓ Successfully added agent-rack to Claude Code CLI!
+Register with Codex CLI? [Y/n] y
+Registering agent-rack with Codex CLI...
+✓ Successfully added agent-rack to Codex CLI!
+- Claude Desktop not found, skipping.
+
+Done. Restart the client(s) above to pick up the new tools.
+```
+
+Needs a real interactive terminal (it asks yes/no questions on stdin) — over some SSH sessions,
+certain IDE-embedded terminals, or when output is piped/redirected, stdin isn't a TTY and this
+command exits with an error pointing you at the explicit `install --target` commands instead of
+silently doing nothing.
+
+### `install`
+
+```sh
+agent-rack install --target <target> [--scope project|user]   # default target: claude
+```
+
+| Target | What happens |
+| --- | --- |
+| `claude` | `claude mcp add agent-rack -- node <resolved-bin-path> start`. `--scope` maps directly to Claude Code's own `-s local\|user\|project` flag; omitted, it uses Claude Code's own default (`local` — tied to this exact directory, not shared). `project` writes a git-shareable `.mcp.json` in the project root; `user` is available in every project. |
+| `codex` | `codex mcp add agent-rack -- node <resolved-bin-path> start` (global only — codex has no project-scope flag). |
+| `desktop` | Merges an `mcpServers.agent-rack` entry into Claude Desktop's config (macOS only). |
+| `cursor` | Merges an `mcpServers.agent-rack` entry into Cursor's `mcp.json`, plus copies agent-rack's two guidance skills into Cursor's `skills/` directory. `--scope user` (default) writes to `~/.cursor/`; `--scope project` writes to `<project>/.cursor/` instead. |
+| `antigravity` (alias `agy`) | Merges an `mcpServers.agent-rack` entry into `~/.gemini/config/mcp_config.json` (Antigravity shares Gemini's config namespace) and copies the same two guidance skills into `~/.gemini/config/skills/`. Global only. |
+| `opencode` | Merges an `mcp.agent-rack` entry into opencode's config (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`) — note this target uses a different config shape (`{ type: "local", command: [...] }`) than the others. Global only. |
+| anything else | Prints a pointer to `agent-rack snippet <target>` instead of silently doing nothing. |
+
+```
+Registering agent-rack with Claude Code CLI...
+✓ Successfully added agent-rack to Claude Code CLI!
+```
+
+### `uninstall`
+
+```sh
+agent-rack uninstall --target <target> [--scope project|user]   # default target: claude
+```
+
+The inverse of `install`, target-for-target, with the same `--scope` semantics for `claude`/
+`cursor`. `desktop`/`cursor`/`antigravity`/`opencode` all back up their config file to a `.bak`
+alongside it before removing the `agent-rack` entry. Safe to run even if it was never
+installed — it reports "nothing to remove"/"no automatic removal" instead of failing. See
+[Uninstall](#uninstall) below.
+
+### `config init`
+
+```sh
+agent-rack config init [-p, --path ./agent-rack.config.json]
+```
+
+Writes a real config scoped to your current directory — all four default agents pre-filled
+with their actual CLI flags, `allowedWorkspaces` set to `process.cwd()` (not a placeholder).
+Only needed if you're customizing something (see [Configuration](#configuration)).
+
+### `config-check`
+
+```sh
+agent-rack config-check [-c, --config <path>]
+```
+
+Resolves config through the same precedence order the server uses, and prints it — or exits
+non-zero with the validation error if something's wrong.
+
+```
+✓ Configuration valid! Loaded from: /Users/you/project/agent-rack.config.json
+{
+  "transport": "stdio",
+  "allowedWorkspaces": ["/Users/you/project"],
+  ...
+}
+```
+
+### `agents`
+
+```sh
+agent-rack agents [-c, --config <path>]
+```
+
+Lists every configured agent and probes `$PATH` to confirm its binary is actually reachable.
+
+```
+Registered Agents Status:
+
+ ✓ [claude] Claude Code CLI (claude) -> AVAILABLE
+   Transport: claude_stream_json
+   Args: --dangerously-skip-permissions --output-format json
+
+ ✗ [codex] Codex CLI (codex) -> MISSING BINARY
+   Transport: codex_exec_json
+   Args: exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox
+```
+
+### `snippet`
+
+```sh
+agent-rack snippet <client>
+```
+
+Prints the `mcpServers` JSON block to paste into any MCP client's config by hand — for clients
+`install` doesn't automate (VS Code, GitHub Copilot, and anything else not listed in
+[`install`](#install)). `<client>` is just a label in the printed message; the JSON itself is
+identical for every client.
+
 ## Troubleshooting
 
 **`command not found: agent-rack`** — if you installed globally, confirm npm's global bin
@@ -607,17 +607,6 @@ API yet):
 5. Add a default entry in `getDefaultConfig` (`src/config/loader.ts`) and
    `agent-rack.config.example.json`, or just add one to your own config's `agents` map.
 6. `pnpm build` and run from your local checkout, or open a PR to get it merged upstream.
-
-## Documentation index
-
-| Document | Description |
-| --- | --- |
-| 📋 [Product Requirements (PRD)](docs/PRD.md) | Problem statement, goals/non-goals, architecture overview, MCP tool specifications, safety model, and roadmap. |
-| 📖 [User Stories & Epics](docs/USER_STORIES.md) | Detailed user stories, acceptance criteria, epic organization, and prioritization matrix. |
-| 🗺️ [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) | Step-by-step technical implementation roadmap divided into 6 distinct phases. |
-| 🎨 [Draw.io Diagram](docs/diagrams/architecture.drawio) | Edit-ready Draw.io XML diagram showing system layers, MCP routers, session managers, adapters, and target CLIs. |
-| 🧪 [`agent_review` Design Spec](docs/specs/2026-08-01-agent-review-design.md) | Design decisions behind the structured review tool: JSON contract, read-only enforcement, adversarial stance. |
-| 🔧 [`agent_review` Implementation Plan](docs/plans/2026-08-01-agent-review-implementation.md) | Task-by-task build plan and test fixtures for `agent_review`. |
 
 ## Contributing
 
