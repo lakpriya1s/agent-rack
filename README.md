@@ -449,6 +449,18 @@ agent-rack cp [dest] [--target <target>] [--scope project|user] [--skill <name>]
 
 Copies agent-rack's skill set into a target agent or project skills directory. If `dest` or `--target` is omitted, it auto-detects client project folders (`.claude`, `.cursor`, `.gemini`, `.agents`, `.opencode`) in the current working directory.
 
+### `dashboard` (alias `ui`)
+
+```sh
+agent-rack dashboard [-c, --config <path>]
+```
+
+Launches an interactive terminal user interface (TUI) built with Ink/React. Provides real-time visibility and control over local agent processes:
+- **Session & Process Monitor**: Live table of running, completed, or failed agent sessions with log streaming (`ParsedAgentEvent` buffer).
+- **Agent Launcher**: Manually trigger one-off agent tasks or `agent_review` runs directly from the terminal.
+- **System & Binary Inspector**: Check binary availability on `$PATH` and active security sandbox settings.
+- **Review Inspector**: Structured visual inspector for code review verdicts, findings, and recommendations.
+
 ### `uninstall`
 
 ```sh

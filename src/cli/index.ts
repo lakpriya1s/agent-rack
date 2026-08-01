@@ -568,6 +568,16 @@ export function runCLI() {
       handleCpCommand(dest, options);
     });
 
+  program
+    .command('dashboard')
+    .alias('ui')
+    .description('Launch the interactive CLI dashboard (TUI) for agent-rack')
+    .option('-c, --config <path>', 'Path to agent-rack.config.json')
+    .action(async (options) => {
+      const { startDashboard } = await import('./dashboard/index.js');
+      await startDashboard(options.config);
+    });
+
   // Default subcommand: if no subcommand provided, launch server
   if (process.argv.length === 2) {
     startAgentMCPServer();
