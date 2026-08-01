@@ -64,19 +64,6 @@ npx agent-rack install --target opencode     # OpenCode
 npx agent-rack snippet vscode                # print a snippet to paste anywhere else
 ```
 
-### Copying skills to any project or agent
-
-You can also copy agent-rack's skill set directly to any project or agent skills directory using `agent-rack cp` (or `agent-rack copy-skills`):
-
-```sh
-agent-rack cp                                # auto-detects client folders in current directory and copies skills
-agent-rack cp --target cursor                # copies skills to .cursor/skills in current project
-agent-rack cp --target antigravity           # copies skills to .gemini/skills in current project
-agent-rack cp --target claude --scope user   # copies skills to ~/.claude/skills (global)
-agent-rack cp ./my-project                   # copies skills to ./my-project
-agent-rack cp ./my-project --target codex    # copies skills to ./my-project/.agents/skills
-```
-
 `claude` and `cursor` also accept `--scope project` to register only for the current project
 (a git-shareable `.mcp.json`/`.cursor/mcp.json` in the project root) instead of globally for
 every project — see [`install`](#install) below for details.
@@ -256,6 +243,19 @@ into other tools' own skill directories** when you register with them:
 So a Cursor or Antigravity user gets the same "don't auto-fix review findings" guidance a Claude
 Code plugin user gets — just delivered as a plain copied skill file instead of a bundled plugin,
 since neither tool has a marketplace-style plugin format agent-rack can install through.
+
+### Copying skills to any project or agent (`agent-rack cp`)
+
+You can copy agent-rack's skill set to any project or agent skills directory using `agent-rack cp` (or `agent-rack copy-skills`):
+
+```sh
+agent-rack cp                                # copies skills into detected client folders (.cursor/skills, .gemini/skills, etc.)
+agent-rack cp --target cursor                # copies skills to .cursor/skills in current project
+agent-rack cp --target antigravity           # copies skills to .gemini/skills in current project
+agent-rack cp --target claude --scope user   # copies skills to ~/.claude/skills (global)
+agent-rack cp ./my-project                   # copies skills to ./my-project
+agent-rack cp ./my-project --target codex    # copies skills to ./my-project/.agents/skills
+```
 
 ## Structured code review (`agent_review`)
 
@@ -440,6 +440,14 @@ agent-rack install --target <target> [--scope project|user]   # default target: 
 Registering agent-rack with Claude Code CLI...
 ✓ Successfully added agent-rack to Claude Code CLI!
 ```
+
+### `cp` (alias `copy-skills`)
+
+```sh
+agent-rack cp [dest] [--target <target>] [--scope project|user] [--skill <name>] [--prefix <prefix>]
+```
+
+Copies agent-rack's skill set into a target agent or project skills directory. If `dest` or `--target` is omitted, it auto-detects client project folders (`.claude`, `.cursor`, `.gemini`, `.agents`, `.opencode`) in the current working directory.
 
 ### `uninstall`
 
