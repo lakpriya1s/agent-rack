@@ -491,8 +491,22 @@ Copies agent-rack's skill set into a target agent or project skills directory. I
 ### `dashboard` (alias `ui`)
 
 ```sh
-agent-rack dashboard [-c, --config <path>]
+agent-rack dashboard [-c, --config <path>] [--connect <url>]
 ```
+
+The dashboard is a client of a running agent-rack server, not a standalone tool — it shows the
+same sessions any other MCP client (Claude Code, Codex, etc.) creates, and vice versa. Before
+launching it:
+
+1. Set `"transport": "sse"` and a port such as `"port": 8987` in `agent-rack.config.json`.
+2. Start the server: `agent-rack start` (leave it running).
+3. Point every MCP client's config at `http://localhost:8987/sse` instead of having each spawn
+   its own private `agent-rack start` over stdio.
+4. Run `agent-rack dashboard` — it connects to that same server automatically. Pass `--connect
+   <url>` to point at a different server explicitly; this overrides the configured connection.
+
+If no shared server is reachable, the dashboard prints how to start one and exits, rather than
+falling back to a disconnected local-only view.
 
 Launches an interactive terminal user interface (TUI) built with Ink/React. Provides real-time visibility and control over local agent processes:
 - **Session & Process Monitor**: Live table of running, completed, or failed agent sessions with log streaming (`ParsedAgentEvent` buffer).
