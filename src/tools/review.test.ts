@@ -174,6 +174,36 @@ describe('agent_review tool', () => {
     }
   });
 
+  it('appends --model <value> to the spawned args when model is given (sync)', async () => {
+    const dir = await makeTempGitRepoWithChange();
+    try {
+      const config = getDefaultConfig(dir);
+      const echoScript = path.join(dir, 'echo-args.cjs');
+      fs.writeFileSync(
+        echoScript,
+        "console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: process.argv.slice(2).join(' ') } }));\n"
+      );
+      config.agents['codexish'] = {
+        name: 'Codex-ish',
+        command: 'node',
+        args: [echoScript],
+        transport: 'codex_exec_json' as const,
+        env: {},
+      };
+      const sessionManager = new SessionManager(config);
+      const [reviewTool] = registerReviewTools(config, sessionManager);
+
+      const response = await reviewTool.handler({ agent: 'codexish', workspace: dir, model: 'gpt-5.5' });
+      const review = JSON.parse((response.content as any)[0].text);
+
+      expect(review.raw).toContain('--model gpt-5.5');
+      // The configured agent entry itself must not be mutated.
+      expect(config.agents['codexish'].args).not.toContain('--model');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('threads timeoutSeconds through to the background session', async () => {
     const dir = await makeTempGitRepoWithChange();
     try {
@@ -199,8 +229,9 @@ describe('agent_review tool', () => {
       const options = createSpy.mock.calls[0][4];
       expect(options?.timeoutSeconds).toBe(42);
       expect(options?.kind).toBe('review');
-      // pty_interactive has no native read-only mode, so no config override is applied.
-      expect(options?.agentConfigOverride).toBeUndefined();
+      // pty_interactive has no native read-only mode and no model override was requested,
+      // so the override is a no-op — same args as the configured agent.
+      expect(options?.agentConfigOverride?.args).toEqual(config.agents['fake_reviewer'].args);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

@@ -131,13 +131,14 @@ No parameters. Lists every configured agent and whether its binary is on `$PATH`
 | `workspace` | string | no | first `allowedWorkspaces` entry | Directory the agent runs in (must be within `allowedWorkspaces`) |
 | `timeoutSeconds` | number | no | `security.defaultTimeoutSeconds` (`600`) | Max execution time |
 | `mode` | string | no | — | Execution mode forwarded to the agent (e.g. `plan`, `acceptEdits`, `auto` for claude) |
+| `model` | string | no | agent's configured `model`, else the CLI's own default | Model to run this call with (e.g. `gpt-5.5` for codex, `opus` for claude, `provider/model` for opencode). See [Changing models](#changing-models). |
 
 Returns the agent's response as plain text, with a `### Tool Calls Executed` manifest appended
 if the agent used any tools while running.
 
 ### `agent_session_create`
 
-Same parameters as `agent_run` (`agent`, `prompt` required; `workspace`, `mode` optional).
+Same parameters as `agent_run` (`agent`, `prompt` required; `workspace`, `mode`, `model` optional).
 Returns session info immediately instead of blocking:
 
 ```json
@@ -274,6 +275,7 @@ have to be stuffed into the prompt.
 | `focus` | string | — | Steering text for the adversarial review. |
 | `background` | boolean | `false` | Run as a background session; poll `agent_session_status` for the parsed result. |
 | `timeoutSeconds` | number | `600` | Maximum execution time. |
+| `model` | string | agent's configured `model`, else the CLI's own default | Model to run this review with. See [Changing models](#changing-models). |
 
 ```json
 {
@@ -361,10 +363,47 @@ cp agent-rack.config.example.json agent-rack.config.json
 | `transport` | `stdio` (default, for local IDE integration) or `sse` (HTTP-SSE, for remote/mobile access) |
 | `port` | HTTP port when `transport` is `sse` |
 | `allowedWorkspaces` | Absolute directory paths agents are permitted to touch. Every tool call is validated against this list before any subprocess spawns — this is the entire security boundary. |
-| `agents` | Map of agent id → `{ name, command, args, transport, env, description }` |
+| `agents` | Map of agent id → `{ name, command, args, transport, env, description, model }` |
 | `security.sanitizeEnv` | Strip env vars matching secret/password/token patterns before spawning agents (default `true`) |
 | `security.maxConcurrentSessions` | Cap on simultaneously running background sessions (default `5`) |
 | `security.defaultTimeoutSeconds` | Default execution timeout per run, in seconds (default `600`) |
+
+### Changing models
+
+Every agent CLI (`claude`, `codex`, `opencode`, `agy`) accepts a `--model`/`-m` flag, and
+agent-rack doesn't hardcode one — by default each CLI falls back to whatever it's configured
+with locally (e.g. codex reads `model` from `~/.codex/config.toml`). There are two ways to pin
+or change it:
+
+1. **Per agent, in `agent-rack.config.json`** — set a default that applies to every call to
+   that agent, until overridden per-call:
+
+   ```json
+   "codex": {
+     "name": "Codex CLI",
+     "command": "codex",
+     "args": ["exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"],
+     "transport": "codex_exec_json",
+     "model": "gpt-5.5"
+   }
+   ```
+
+2. **Per call** — pass `model` to `agent_run`, `agent_session_create`, `agent_review`, or any
+   `<agentId>_run` shortcut. This takes precedence over the config default for that one call:
+
+   ```json
+   { "agent": "codex", "prompt": "…", "model": "gpt-5.5" }
+   ```
+
+Resolution order: runtime `model` argument → agent's configured `model` → the CLI's own
+default. agent-rack just appends `--model <value>`; it never validates the model name itself.
+
+If you see `Model metadata for \`X\` not found. Defaulting to fallback metadata` from codex,
+that warning comes from the Codex CLI, not agent-rack — the installed CLI version's local model
+catalog doesn't recognize that model id yet (typically because the model shipped after that CLI
+version froze its catalog). It's non-fatal — codex keeps running with generic assumptions
+(context window, pricing) — but if it bothers you, switch to a model your installed `codex
+--version` does recognize, or run `codex` standalone with `-c model="<id>"` to check first.
 
 ## CLI commands
 

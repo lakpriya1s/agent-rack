@@ -21,6 +21,17 @@ export function resolveTimeoutSeconds(args: Record<string, unknown>, config: Age
     : config.security.defaultTimeoutSeconds;
 }
 
+/** Runtime `model` argument, falling back to the agent's configured default model. */
+export function resolveModel(args: Record<string, unknown>, agentConfig: AgentConfig): string | undefined {
+  return typeof args.model === 'string' && args.model.length > 0 ? args.model : agentConfig.model;
+}
+
+/** Returns a shallow copy of `agentConfig` with `--model <model>` appended to `args`. */
+export function applyModelOverride(agentConfig: AgentConfig, model: string | undefined): AgentConfig {
+  if (!model) return agentConfig;
+  return { ...agentConfig, args: [...agentConfig.args, '--model', model] };
+}
+
 /** Looks up a configured agent, throwing the shared not-configured error when absent. */
 export function requireAgentConfig(config: AgentMCPConfig, agentId: string): AgentConfig {
   const agentConfig = config.agents[agentId];

@@ -4,7 +4,7 @@ import { validateWorkspacePath } from '../security/workspace.js';
 import { createAdapter } from '../adapters/index.js';
 import { AgentProcessController } from '../engine/process.js';
 import { listAgentAvailability } from '../engine/availability.js';
-import { requireAgentConfig, resolveTimeoutSeconds, resolveWorkspace } from './args.js';
+import { applyModelOverride, requireAgentConfig, resolveModel, resolveTimeoutSeconds, resolveWorkspace } from './args.js';
 
 export interface MCPToolDefinition {
   name: string;
@@ -68,6 +68,11 @@ export function registerUnifiedTools(
           type: 'string',
           description: 'Execution mode (e.g. auto, plan, accept_edits, manual)',
         },
+        model: {
+          type: 'string',
+          description:
+            "Model to run the agent with (e.g. 'gpt-5.5' for codex, 'opus' for claude). Overrides the agent's configured default model for this call only.",
+        },
       },
       required: ['agent', 'prompt'],
     },
@@ -78,7 +83,8 @@ export function registerUnifiedTools(
       const timeoutSeconds = resolveTimeoutSeconds(args, config);
       const mode = args.mode ? String(args.mode) : undefined;
 
-      const agentConfig = requireAgentConfig(config, agentId);
+      const baseAgentConfig = requireAgentConfig(config, agentId);
+      const agentConfig = applyModelOverride(baseAgentConfig, resolveModel(args, baseAgentConfig));
 
       validateWorkspacePath(workspace, config.allowedWorkspaces);
 
@@ -127,6 +133,11 @@ export function registerUnifiedTools(
           type: 'string',
           description: 'Execution mode',
         },
+        model: {
+          type: 'string',
+          description:
+            "Model to run the agent with (e.g. 'gpt-5.5' for codex, 'opus' for claude). Overrides the agent's configured default model for this session only.",
+        },
       },
       required: ['agent', 'prompt'],
     },
@@ -136,7 +147,10 @@ export function registerUnifiedTools(
       const workspace = args.workspace ? String(args.workspace) : undefined;
       const mode = args.mode ? String(args.mode) : undefined;
 
-      const session = sessionManager.createSession(agentId, prompt, workspace, mode);
+      const baseAgentConfig = requireAgentConfig(config, agentId);
+      const agentConfigOverride = applyModelOverride(baseAgentConfig, resolveModel(args, baseAgentConfig));
+
+      const session = sessionManager.createSession(agentId, prompt, workspace, mode, { agentConfigOverride });
 
       return {
         content: [

@@ -4,7 +4,13 @@ import { validateWorkspacePath } from '../security/workspace.js';
 import { createAdapter } from '../adapters/index.js';
 import { AgentProcessController } from '../engine/process.js';
 import { MCPToolDefinition } from './unified.js';
-import { requireAgentConfig, resolveTimeoutSeconds, resolveWorkspace } from './args.js';
+import {
+  applyModelOverride,
+  requireAgentConfig,
+  resolveModel,
+  resolveTimeoutSeconds,
+  resolveWorkspace,
+} from './args.js';
 import {
   buildReviewPrompt,
   getReadOnlyMode,
@@ -60,6 +66,10 @@ export function registerReviewTools(
           type: 'number',
           description: 'Maximum execution time in seconds (default: 600)',
         },
+        model: {
+          type: 'string',
+          description: "Model to run the review with, overriding the agent's configured default model for this call only",
+        },
       },
       required: ['agent'],
     },
@@ -102,8 +112,9 @@ export function registerReviewTools(
       // When a native read-only mode is requested, the agent's configured escape-hatch
       // flags (--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox)
       // would nullify it, so strip them for this run only.
-      const effectiveAgentConfig =
+      const readOnlyAgentConfig =
         readOnlyMode !== undefined ? stripEscapeHatchArgs(agentConfig) : agentConfig;
+      const effectiveAgentConfig = applyModelOverride(readOnlyAgentConfig, resolveModel(args, agentConfig));
 
       const prompt = buildReviewPrompt({
         scope,
@@ -117,7 +128,7 @@ export function registerReviewTools(
         const session = sessionManager.createSession(agentId, prompt, workspace, readOnlyMode, {
           kind: 'review',
           timeoutSeconds,
-          agentConfigOverride: readOnlyMode !== undefined ? effectiveAgentConfig : undefined,
+          agentConfigOverride: effectiveAgentConfig,
         });
         return {
           content: [{ type: 'text', text: JSON.stringify(session.getInfo(), null, 2) }],

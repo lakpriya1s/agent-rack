@@ -16,6 +16,8 @@ export const AgentConfigSchema = z.object({
   transport: AgentTransportTypeSchema,
   env: z.record(z.string(), z.string()).default({}),
   description: z.string().optional(),
+  /** Default model to pass via `--model` when a tool call doesn't override it. */
+  model: z.string().optional(),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;

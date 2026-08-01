@@ -32,6 +32,10 @@ export function registerShortcutTools(
             type: 'string',
             description: 'Execution mode',
           },
+          model: {
+            type: 'string',
+            description: `Model to run ${agentConfig.name} with, overriding its configured default for this call only`,
+          },
         },
         required: ['prompt'],
       },
