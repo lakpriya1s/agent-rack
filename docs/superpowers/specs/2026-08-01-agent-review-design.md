@@ -49,6 +49,11 @@ focused:
   and `claude_stream_json` have native read-only/plan modes; `agy_stream`
   and `pty_interactive` do not, and get best-effort prompt-level enforcement
   only (see Read-only enforcement below).
+- Hardening against adversarial *input*. `baseRef` and `focus` are
+  interpolated into the review prompt verbatim. This is not a shell-injection
+  risk — git is always invoked via `execa` argv arrays, never through a shell —
+  but it is a prompt-injection surface (a crafted `focus` can restate the
+  agent's instructions). Named here for a future adversarial-input pass.
 
 ## Architecture
 
@@ -88,7 +93,7 @@ Modified files:
 1. **Git pre-check** (server-side, cheap, no agent spawn): via `execa` in the
    workspace —
    - `scope: 'working-tree'` → `git status --short --untracked-files=all`
-     and `git diff --shortstat` (+ `--cached`).
+     (this alone already covers staged, unstaged, and untracked changes).
    - `scope: 'branch'` → `git diff --shortstat <baseRef>...HEAD`.
    - If everything is empty, short-circuit: return
      `{verdict: 'approve', summary: 'Nothing to review.', findings: [],
@@ -106,20 +111,38 @@ Modified files:
 3. **Read-only enforcement**, mapped per adapter transport:
    - `codex_exec_json` → `mode: 'read-only'` (native `--sandbox` flag,
      `src/adapters/codex.ts:19`).
-   - `claude_stream_json` → `mode: 'plan'` (native `--mode` flag,
-     `src/adapters/claude.ts:12`).
+   - `claude_stream_json` → `mode: 'plan'` (native `--permission-mode` flag,
+     `src/adapters/claude.ts`; note the adapter originally emitted `--mode`,
+     which Claude Code rejects outright).
    - `agy_stream` / `pty_interactive` → no native flag; rely on an explicit
      "you must not modify any files" instruction in the prompt. Documented
      as a known limitation, not silently assumed safe.
+
+   **Escape-hatch stripping.** The default agent configs carry unconditional
+   escape-hatch flags (`--dangerously-skip-permissions` for claude,
+   `--dangerously-bypass-approvals-and-sandbox` for codex) so ordinary
+   `agent_run` tasks can edit files. Left in place, those flags nullify the
+   read-only flag `agent_review` adds — the CLIs accept both without a parser
+   error and the bypass wins. `stripEscapeHatchArgs` (`src/engine/review.ts`)
+   therefore removes the transport's escape-hatch flag from a *copy* of the
+   agent config whenever a native read-only mode is requested, so enforcement
+   is actually effective rather than silently nullified. The configured agent
+   entry is never mutated, and the override applies to that review run only
+   (sync via the adapter/controller, background via
+   `SessionManager.createSession`'s `agentConfigOverride` option).
+
+   The explicit "MUST be read-only" prompt instruction is *always* included,
+   even when a native mode is in play — native enforcement varies by transport
+   and CLI version, so prompt-level enforcement is never dropped.
 4. **Execution**:
    - `background: false` → fresh `AgentProcessController.runSync`, same
      pattern as `agent_run`. Parse/validate synchronously, return the
      structured result.
    - `background: true` → `sessionManager.createSession(agentId, prompt,
-     workspace, mode, { kind: 'review' })`. When the session's process
-     resolves, `SessionManager` parses/validates `result.summary` and
-     stores it on `session.reviewResult`. `agent_session_status` surfaces it
-     via `getInfo().review`.
+     workspace, mode, { kind: 'review', timeoutSeconds, agentConfigOverride })`.
+     When the session's process resolves, `SessionManager` parses/validates
+     `result.rawText` and stores it on `session.reviewResult`.
+     `agent_session_status` surfaces it via `getInfo().review`.
 5. **Output validation**: `ReviewOutputSchema` (zod) —
    ```
    verdict: 'approve' | 'needs-attention'
@@ -129,17 +152,27 @@ Modified files:
      title: string
      body: string
      file: string
-     line_start: number (>= 1)
-     line_end: number (>= 1)
+     line_start: number (>= 0; 0 = whole-file / no specific line)
+     line_end: number (>= 0; 0 = whole-file / no specific line)
      confidence: number (0-1)
      recommendation: string
    }>
    next_steps: string[]
    ```
-   Extract the JSON object from the agent's raw output text — strip
-   surrounding markdown code fences (` ```json ... ``` `) if present, then
-   take the outermost `{...}` block — and `safeParse` it against the
-   schema.
+   Extraction runs against `result.rawText`, **not** `result.summary`: the
+   claude and codex adapters append a `### Tool Calls Executed` block (with
+   JSON-stringified tool inputs) to `summary`, and the review prompt
+   guarantees the agent runs git commands, so `summary` always carries that
+   trailing block. `rawText` is built purely from `text` events in all four
+   adapters.
+
+   Extraction itself is tolerant rather than a single first-`{`/last-`}`
+   slice: every markdown-fenced block is tried as a candidate first, then the
+   whole raw text; within each candidate the closing brace is walked backwards
+   from the last `}`, and the first substring that both `JSON.parse`s and
+   passes `ReviewOutputSchema.safeParse` wins. This recovers the payload from
+   leading/trailing prose, multiple fenced blocks, and appended tool-call
+   noise. If nothing validates, the parse-error fallback applies.
 
 ## Error handling
 
