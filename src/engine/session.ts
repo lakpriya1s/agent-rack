@@ -67,7 +67,13 @@ export class SessionManager {
     prompt: string,
     workspace?: string,
     mode?: string,
-    options?: { kind?: SessionKind }
+    options?: {
+      kind?: SessionKind;
+      /** Replaces the configured agent config (e.g. with escape-hatch flags stripped). */
+      agentConfigOverride?: AgentConfig;
+      /** Overrides security.defaultTimeoutSeconds for this session only. */
+      timeoutSeconds?: number;
+    }
   ): AgentSession {
     const activeCount = Array.from(this.sessions.values()).filter((s) => s.status === 'running').length;
     const maxAllowed = this.config.security?.maxConcurrentSessions || 5;
@@ -76,10 +82,10 @@ export class SessionManager {
       throw new Error(`Maximum concurrent sessions limit (${maxAllowed}) reached.`);
     }
 
-    const agentConfig = this.config.agents[agentId];
-    if (!agentConfig) {
+    if (!this.config.agents[agentId]) {
       throw new Error(`Agent '${agentId}' is not defined in configuration.`);
     }
+    const agentConfig = options?.agentConfigOverride ?? this.config.agents[agentId];
 
     const targetWorkspace = workspace || this.config.allowedWorkspaces[0];
     validateWorkspacePath(targetWorkspace, this.config.allowedWorkspaces);
@@ -92,7 +98,7 @@ export class SessionManager {
       prompt,
       workspace: targetWorkspace,
       mode,
-      timeoutSeconds: this.config.security?.defaultTimeoutSeconds || 600,
+      timeoutSeconds: options?.timeoutSeconds ?? this.config.security?.defaultTimeoutSeconds ?? 600,
       sanitizeEnv: this.config.security?.sanitizeEnv !== false,
     };
 
@@ -102,7 +108,10 @@ export class SessionManager {
         session.result = result;
         session.status = 'completed';
         if (session.kind === 'review') {
-          session.reviewResult = extractAndValidateReview(result.summary);
+          // Parse rawText, not summary: adapters append a "### Tool Calls Executed" block
+          // to summary, which corrupts JSON extraction (the review prompt guarantees the
+          // agent runs git commands, so there are always tool calls).
+          session.reviewResult = extractAndValidateReview(result.rawText || result.summary);
         }
       })
       .catch((err) => {

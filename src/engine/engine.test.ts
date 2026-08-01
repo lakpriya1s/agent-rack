@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { EventRingBuffer } from './buffer.js';
 import { getDefaultConfig } from '../config/loader.js';
 import { SessionManager } from './session.js';
+import { waitForSessionCompletion } from '../test-helpers/session.js';
 
 describe('EventRingBuffer', () => {
   it('respects capacity limit', () => {
@@ -39,16 +40,6 @@ describe('SessionManager', () => {
     expect(() => manager.createSession('test_echo', 'world')).toThrow(/Maximum concurrent sessions limit/);
   });
 });
-
-async function waitForSessionCompletion(manager: SessionManager, sessionId: string, timeoutMs = 5000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const session = manager.getSession(sessionId);
-    if (session && session.status !== 'running') return session;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error('Timed out waiting for session to complete');
-}
 
 describe('SessionManager review sessions', () => {
   it('tags a session as kind "task" by default', () => {

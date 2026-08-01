@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { execa } from 'execa';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { getDefaultConfig } from '../config/loader.js';
 import { SessionManager } from '../engine/session.js';
+import { waitForSessionCompletion } from '../test-helpers/session.js';
 import { registerReviewTools } from './review.js';
 
 async function makeTempGitRepoWithChange(): Promise<string> {
@@ -26,16 +27,6 @@ function fakeReviewerConfig(reviewPayload: Record<string, unknown>) {
     transport: 'pty_interactive' as const,
     env: {},
   };
-}
-
-async function waitForSessionCompletion(manager: SessionManager, sessionId: string, timeoutMs = 5000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const session = manager.getSession(sessionId);
-    if (session && session.status !== 'running') return session;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error('Timed out waiting for session to complete');
 }
 
 describe('agent_review tool', () => {
@@ -121,6 +112,95 @@ describe('agent_review tool', () => {
 
       const completed = await waitForSessionCompletion(sessionManager, sessionInfo.sessionId);
       expect(completed.getInfo().review?.verdict).toBe('approve');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws on an invalid scope value instead of silently reviewing the working tree', async () => {
+    const dir = await makeTempGitRepoWithChange();
+    try {
+      const config = getDefaultConfig(dir);
+      config.agents['fake_reviewer'] = fakeReviewerConfig({
+        verdict: 'approve',
+        summary: 'x',
+        findings: [],
+        next_steps: [],
+      });
+      const sessionManager = new SessionManager(config);
+      const [reviewTool] = registerReviewTools(config, sessionManager);
+
+      await expect(
+        reviewTool.handler({ agent: 'fake_reviewer', workspace: dir, scope: 'brnach' })
+      ).rejects.toThrow(/scope must be 'working-tree' or 'branch'/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('strips the escape-hatch flag when a native read-only mode is requested (sync)', async () => {
+    const dir = await makeTempGitRepoWithChange();
+    try {
+      const config = getDefaultConfig(dir);
+      // Echo the received argv back as the agent's text output so we can inspect it.
+      // A script file (not `node -e`) is required so node stops parsing its own options
+      // and forwards flags like `--sandbox` to the script untouched.
+      const echoScript = path.join(dir, 'echo-args.cjs');
+      fs.writeFileSync(
+        echoScript,
+        "console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: process.argv.slice(2).join(' ') } }));\n"
+      );
+      config.agents['codexish'] = {
+        name: 'Codex-ish',
+        command: 'node',
+        args: [echoScript, '--dangerously-bypass-approvals-and-sandbox'],
+        transport: 'codex_exec_json' as const,
+        env: {},
+      };
+      const sessionManager = new SessionManager(config);
+      const [reviewTool] = registerReviewTools(config, sessionManager);
+
+      const response = await reviewTool.handler({ agent: 'codexish', workspace: dir });
+      const review = JSON.parse((response.content as any)[0].text);
+
+      // No valid review JSON came back, so the raw agent text is preserved in `raw`.
+      expect(review.parseError).toBe(true);
+      expect(review.raw).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+      expect(review.raw).toContain('--sandbox read-only');
+      // The configured agent entry itself must not be mutated.
+      expect(config.agents['codexish'].args).toContain('--dangerously-bypass-approvals-and-sandbox');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('threads timeoutSeconds through to the background session', async () => {
+    const dir = await makeTempGitRepoWithChange();
+    try {
+      const config = getDefaultConfig(dir);
+      config.agents['fake_reviewer'] = fakeReviewerConfig({
+        verdict: 'approve',
+        summary: 'ok',
+        findings: [],
+        next_steps: [],
+      });
+      const sessionManager = new SessionManager(config);
+      const [reviewTool] = registerReviewTools(config, sessionManager);
+
+      const createSpy = vi.spyOn(sessionManager, 'createSession');
+
+      await reviewTool.handler({
+        agent: 'fake_reviewer',
+        workspace: dir,
+        background: true,
+        timeoutSeconds: 42,
+      });
+
+      const options = createSpy.mock.calls[0][4];
+      expect(options?.timeoutSeconds).toBe(42);
+      expect(options?.kind).toBe('review');
+      // pty_interactive has no native read-only mode, so no config override is applied.
+      expect(options?.agentConfigOverride).toBeUndefined();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

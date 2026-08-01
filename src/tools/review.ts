@@ -10,6 +10,7 @@ import {
   getReadOnlyMode,
   hasChangesToReview,
   ReviewOutput,
+  stripEscapeHatchArgs,
 } from '../engine/review.js';
 
 export function registerReviewTools(
@@ -64,6 +65,9 @@ export function registerReviewTools(
     handler: async (args) => {
       const agentId = String(args.agent);
       const workspace = args.workspace ? String(args.workspace) : config.allowedWorkspaces[0];
+      if (args.scope !== undefined && args.scope !== 'working-tree' && args.scope !== 'branch') {
+        throw new Error("scope must be 'working-tree' or 'branch'.");
+      }
       const scope = args.scope === 'branch' ? 'branch' : 'working-tree';
       const baseRef = args.baseRef ? String(args.baseRef) : undefined;
       const adversarial = args.adversarial === true;
@@ -97,6 +101,13 @@ export function registerReviewTools(
       }
 
       const readOnlyMode = getReadOnlyMode(agentConfig.transport);
+
+      // When a native read-only mode is requested, the agent's configured escape-hatch
+      // flags (--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox)
+      // would nullify it, so strip them for this run only.
+      const effectiveAgentConfig =
+        readOnlyMode !== undefined ? stripEscapeHatchArgs(agentConfig) : agentConfig;
+
       const prompt = buildReviewPrompt({
         scope,
         baseRef,
@@ -106,14 +117,18 @@ export function registerReviewTools(
       });
 
       if (background) {
-        const session = sessionManager.createSession(agentId, prompt, workspace, readOnlyMode, { kind: 'review' });
+        const session = sessionManager.createSession(agentId, prompt, workspace, readOnlyMode, {
+          kind: 'review',
+          timeoutSeconds,
+          agentConfigOverride: readOnlyMode !== undefined ? effectiveAgentConfig : undefined,
+        });
         return {
           content: [{ type: 'text', text: JSON.stringify(session.getInfo(), null, 2) }],
         };
       }
 
-      const adapter = createAdapter(agentConfig);
-      const controller = new AgentProcessController(agentConfig, adapter);
+      const adapter = createAdapter(effectiveAgentConfig);
+      const controller = new AgentProcessController(effectiveAgentConfig, adapter);
 
       const result = await controller.runSync({
         prompt,
@@ -123,7 +138,9 @@ export function registerReviewTools(
         sanitizeEnv: config.security?.sanitizeEnv !== false,
       });
 
-      const review = extractAndValidateReview(result.summary);
+      // Parse rawText, not summary: adapters append a "### Tool Calls Executed" block to
+      // summary, which corrupts JSON extraction (the review prompt guarantees tool calls).
+      const review = extractAndValidateReview(result.rawText || result.summary);
       return {
         content: [{ type: 'text', text: JSON.stringify(review, null, 2) }],
       };
