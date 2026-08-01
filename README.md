@@ -162,6 +162,11 @@ Registering agent-rack with Codex CLI...
 Done. Restart the client(s) above to pick up the new tools.
 ```
 
+Needs a real interactive terminal (it asks yes/no questions on stdin) — over some SSH sessions,
+certain IDE-embedded terminals, or when output is piped/redirected, stdin isn't a TTY and this
+command exits with an error pointing you at the explicit `install --target` commands instead of
+silently doing nothing.
+
 ### `install`
 
 ```sh

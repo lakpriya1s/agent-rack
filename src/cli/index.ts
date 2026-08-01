@@ -100,7 +100,7 @@ export function runCLI() {
   program
     .name('agent-rack')
     .description('Model Context Protocol (MCP) Server driving agy, claude, opencode, and CLI agents as MCP tools')
-    .version('0.1.4');
+    .version('0.1.5');
 
   program
     .command('start')
@@ -148,6 +148,22 @@ export function runCLI() {
     .command('setup')
     .description('Interactive wizard: detect installed clients and register agent-rack with each')
     .action(async () => {
+      if (!process.stdin.isTTY) {
+        console.error(
+          "'agent-rack setup' needs an interactive terminal to ask yes/no questions, but stdin " +
+            "here isn't one (common over some SSH sessions, certain IDE-embedded terminals, or " +
+            'when output is piped/redirected).'
+        );
+        console.error(
+          '\nUse the explicit commands instead:\n' +
+            '  agent-rack install --target claude\n' +
+            '  agent-rack install --target codex\n' +
+            '  agent-rack install --target desktop'
+        );
+        process.exitCode = 1;
+        return;
+      }
+
       const binPath = resolveBinPath();
       console.log("Let's set up agent-rack.\n");
 
