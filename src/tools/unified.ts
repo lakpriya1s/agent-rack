@@ -1,5 +1,6 @@
 import { AgentMCPConfig } from '../config/schema.js';
 import { SessionManager } from '../engine/session.js';
+import { SessionKind } from '../engine/session.js';
 import { validateWorkspacePath } from '../security/workspace.js';
 import { createAdapter } from '../adapters/index.js';
 import { AgentProcessController } from '../engine/process.js';
@@ -138,6 +139,11 @@ export function registerUnifiedTools(
           description:
             "Model to run the agent with (e.g. 'gpt-5.5' for codex, 'opus' for claude). Overrides the agent's configured default model for this session only.",
         },
+        kind: {
+          type: 'string',
+          enum: ['task', 'review'],
+          description: "Session kind for dashboard categorization (default 'task')",
+        },
       },
       required: ['agent', 'prompt'],
     },
@@ -146,17 +152,39 @@ export function registerUnifiedTools(
       const prompt = String(args.prompt);
       const workspace = args.workspace ? String(args.workspace) : undefined;
       const mode = args.mode ? String(args.mode) : undefined;
+      const kind: SessionKind = args.kind === 'review' ? 'review' : 'task';
 
       const baseAgentConfig = requireAgentConfig(config, agentId);
       const agentConfigOverride = applyModelOverride(baseAgentConfig, resolveModel(args, baseAgentConfig));
 
-      const session = sessionManager.createSession(agentId, prompt, workspace, mode, { agentConfigOverride });
+      const session = sessionManager.createSession(agentId, prompt, workspace, mode, { kind, agentConfigOverride });
 
       return {
         content: [
           {
             type: 'text',
             text: JSON.stringify(session.getInfo(), null, 2),
+          },
+        ],
+      };
+    },
+  });
+
+  // Tool: agent_session_list
+  tools.push({
+    name: 'agent_session_list',
+    description: 'Lists every background sub-agent session tracked by this server (running, completed, failed, or cancelled), most recent first',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    handler: async () => {
+      const sessions = sessionManager.listSessions().map((s) => s.getInfo());
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(sessions, null, 2),
           },
         ],
       };
