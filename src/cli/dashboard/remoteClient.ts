@@ -19,6 +19,16 @@ export class DashboardRemoteClient {
     this.connected = true;
   }
 
+  async close(): Promise<void> {
+    if (!this.connected) return;
+
+    try {
+      await this.client.close();
+    } finally {
+      this.connected = false;
+    }
+  }
+
   private async callTool(name: string, args: Record<string, unknown> = {}): Promise<string> {
     const result = await this.client.callTool({ name, arguments: args });
     const content = (result.content as Array<{ type: string; text?: string }>)?.[0];

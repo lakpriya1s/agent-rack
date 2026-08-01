@@ -9,9 +9,16 @@ import { DashboardRemoteClient } from './remoteClient.js';
 
 let runningServer: http.Server | undefined;
 
-afterEach(() => {
-  runningServer?.close();
+afterEach(async () => {
+  if (!runningServer) return;
+
+  const server = runningServer;
   runningServer = undefined;
+  const closed = new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  server.closeAllConnections();
+  await closed;
 });
 
 async function startTestServer(configPath: string) {
@@ -40,9 +47,10 @@ describe('DashboardRemoteClient', () => {
       })
     );
 
+    let client: DashboardRemoteClient | undefined;
     try {
       const url = await startTestServer(configPath);
-      const client = new DashboardRemoteClient(url);
+      client = new DashboardRemoteClient(url);
       await client.connect();
 
       const created = await client.createSession('echoer', 'hello', dir, 'task');
@@ -62,7 +70,11 @@ describe('DashboardRemoteClient', () => {
       const logs = await client.getSessionLogs(created.sessionId);
       expect(logs.some((e) => e.content.includes('pong'))).toBe(true);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      try {
+        await client?.close();
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     }
   });
 });
