@@ -1,6 +1,6 @@
 # agent_review Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status:** Implemented. Steps use checkbox (`- [ ]`) syntax for tracking task-by-task progress.
 
 **Goal:** Add a new `agent_review` MCP tool to agent-mcp that runs a read-only, structured code review (normal or adversarial) over the working tree or a branch diff, using any configured agent (claude, codex, opencode, agy), synchronously or in the background.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (ESM), `zod` (already a dependency) for schema validation, `execa` (already a dependency) for git/subprocess calls, `vitest` for tests.
 
-**Spec:** `docs/superpowers/specs/2026-08-01-agent-review-design.md`
+**Spec:** `docs/specs/2026-08-01-agent-review-design.md`
 
 ## Global Constraints
 
@@ -1168,6 +1168,6 @@ git commit -m "feat: register agent_review on the MCP server"
 
 ## Self-Review Notes
 
-- **Spec coverage:** git pre-check (Task 3) → schema/validation (Task 1) → read-only mapping + prompt (Task 2) → sync execution (Task 5) → background execution via tagged sessions (Tasks 4–5) → server registration (Task 6). All sections of `docs/superpowers/specs/2026-08-01-agent-review-design.md` are covered; rescue/transfer/plugin work is explicitly out of scope per the spec's Roadmap section.
+- **Spec coverage:** git pre-check (Task 3) → schema/validation (Task 1) → read-only mapping + prompt (Task 2) → sync execution (Task 5) → background execution via tagged sessions (Tasks 4–5) → server registration (Task 6). All sections of `docs/specs/2026-08-01-agent-review-design.md` are covered; rescue/transfer/plugin work is explicitly out of scope per the spec's Roadmap section.
 - **Placeholder scan:** no TBD/TODO markers; every step includes real, runnable code.
 - **Type consistency:** `ReviewOutput`, `getReadOnlyMode`, `buildReviewPrompt`, `hasChangesToReview`, and `extractAndValidateReview` are defined once in Task 1–3 and referenced with identical names/signatures in Tasks 4–6. `SessionManager.createSession`'s new `options` parameter is used identically in Task 4's test and Task 5's tool implementation.

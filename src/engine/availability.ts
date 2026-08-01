@@ -24,7 +24,7 @@ export async function isBinaryAvailable(command: string): Promise<boolean> {
 
 /**
  * Probes every configured agent's binary. Shared by the `agent_list_available` MCP tool and
- * the `agent-mcp agents` CLI command, which differ only in how they render the result.
+ * the `agent-rack agents` CLI command, which differ only in how they render the result.
  */
 export async function listAgentAvailability(config: AgentMCPConfig): Promise<AgentAvailability[]> {
   const entries = Object.entries(config.agents);

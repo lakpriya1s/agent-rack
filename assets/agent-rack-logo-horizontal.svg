@@ -1,0 +1,26 @@
+<svg width="640" height="112" viewBox="0 0 640 112" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="agent-rack">
+  <defs>
+    <linearGradient id="rackGradLight" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="14" y="16" width="76" height="80" rx="8" fill="none" stroke="url(#rackGradLight)" stroke-width="2.5"/>
+
+  <g>
+    <rect x="22" y="26" width="60" height="13" rx="3" fill="url(#rackGradLight)" opacity="0.9"/>
+    <circle cx="76" cy="32.5" r="2.4" fill="#ffffff"/>
+
+    <rect x="22" y="45" width="60" height="13" rx="3" fill="url(#rackGradLight)" opacity="0.65"/>
+    <circle cx="76" cy="51.5" r="2.4" fill="#ffffff"/>
+
+    <rect x="22" y="64" width="60" height="13" rx="3" fill="url(#rackGradLight)" opacity="0.9"/>
+    <circle cx="76" cy="70.5" r="2.4" fill="#ffffff"/>
+
+    <rect x="22" y="83" width="60" height="7" rx="3" fill="url(#rackGradLight)" opacity="0.4"/>
+  </g>
+
+  <text x="118" y="58" font-family="'Segoe UI', system-ui, -apple-system, Roboto, sans-serif" font-size="34" font-weight="700" fill="#0f172a" letter-spacing="-0.5">agent-rack</text>
+  <text x="118" y="84" font-family="'Segoe UI', system-ui, -apple-system, Roboto, sans-serif" font-size="17" font-weight="600" fill="#6366f1" letter-spacing="3">MCP SERVER</text>
+</svg>

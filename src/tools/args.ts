@@ -25,7 +25,7 @@ export function resolveTimeoutSeconds(args: Record<string, unknown>, config: Age
 export function requireAgentConfig(config: AgentMCPConfig, agentId: string): AgentConfig {
   const agentConfig = config.agents[agentId];
   if (!agentConfig) {
-    throw new Error(`Agent '${agentId}' is not configured in agent-mcp.`);
+    throw new Error(`Agent '${agentId}' is not configured in agent-rack.`);
   }
   return agentConfig;
 }

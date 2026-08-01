@@ -43,7 +43,7 @@ describe('requireAgentConfig', () => {
   it('throws for an unknown agent', () => {
     const config = getDefaultConfig();
     expect(() => requireAgentConfig(config, 'nope')).toThrow(
-      "Agent 'nope' is not configured in agent-mcp."
+      "Agent 'nope' is not configured in agent-rack."
     );
   });
 });

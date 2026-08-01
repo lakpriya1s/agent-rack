@@ -54,16 +54,16 @@ export function getDefaultConfig(workspacePath?: string): AgentMCPConfig {
 }
 
 export function findConfigFile(): string | null {
-  if (process.env.AGENT_MCP_CONFIG && fs.existsSync(process.env.AGENT_MCP_CONFIG)) {
-    return path.resolve(process.env.AGENT_MCP_CONFIG);
+  if (process.env.AGENT_RACK_CONFIG && fs.existsSync(process.env.AGENT_RACK_CONFIG)) {
+    return path.resolve(process.env.AGENT_RACK_CONFIG);
   }
 
-  const localConfig = path.resolve(process.cwd(), 'agent-mcp.config.json');
+  const localConfig = path.resolve(process.cwd(), 'agent-rack.config.json');
   if (fs.existsSync(localConfig)) {
     return localConfig;
   }
 
-  const userConfig = path.resolve(os.homedir(), '.config', 'agent-mcp', 'config.json');
+  const userConfig = path.resolve(os.homedir(), '.config', 'agent-rack', 'config.json');
   if (fs.existsSync(userConfig)) {
     return userConfig;
   }

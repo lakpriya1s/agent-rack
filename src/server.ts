@@ -16,8 +16,8 @@ export async function createAgentMCPServer(configPath?: string) {
 
   const server = new Server(
     {
-      name: 'agent-mcp',
-      version: '1.0.0',
+      name: 'agent-rack',
+      version: '0.1.0',
     },
     {
       capabilities: {
@@ -52,7 +52,7 @@ export async function createAgentMCPServer(configPath?: string) {
     const tool = toolMap.get(name);
 
     if (!tool) {
-      throw new Error(`Tool '${name}' is not registered on agent-mcp server.`);
+      throw new Error(`Tool '${name}' is not registered on agent-rack server.`);
     }
 
     try {
@@ -83,9 +83,9 @@ export async function startAgentMCPServer(options: { configPath?: string; transp
   // to the current directory. That is the whole security boundary, so say so out loud.
   if (!filePath) {
     console.error(
-      `Warning: no agent-mcp config file found. Falling back to built-in defaults with ` +
+      `Warning: no agent-rack config file found. Falling back to built-in defaults with ` +
         `allowedWorkspaces=[${config.allowedWorkspaces.join(', ')}]. ` +
-        `Copy agent-mcp.config.example.json to agent-mcp.config.json to pin this explicitly.`
+        `Copy agent-rack.config.example.json to agent-rack.config.json to pin this explicitly.`
     );
   }
 

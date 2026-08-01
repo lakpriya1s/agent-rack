@@ -8,18 +8,19 @@ import { loadConfig, getDefaultConfig, saveConfig } from '../config/loader.js';
 import { listAgentAvailability } from '../engine/availability.js';
 
 /**
- * Path to the executable as MCP clients must spell it. Resolved against the *current
- * directory*, so `install` and `snippet` are only correct when run from the repo root.
+ * Path to the executable as MCP clients must spell it. Resolved from `process.argv[1]` — the
+ * script Node actually ran — so it is correct whether invoked from the repo (`node
+ * bin/agent-rack.js`), a global npm install, or via `npx`, regardless of cwd.
  */
 function resolveBinPath(): string {
-  return path.resolve(process.cwd(), 'bin/agent-mcp.js');
+  return path.resolve(process.argv[1]);
 }
 
 /** The `mcpServers` block every MCP client (Claude Desktop, Cursor, Antigravity) expects. */
 function buildMcpServerSnippet() {
   return {
     mcpServers: {
-      'agent-mcp': {
+      'agent-rack': {
         command: 'node',
         args: [resolveBinPath(), 'start'],
       },
@@ -31,14 +32,14 @@ export function runCLI() {
   const program = new Command();
 
   program
-    .name('agent-mcp')
+    .name('agent-rack')
     .description('Model Context Protocol (MCP) Server driving agy, claude, opencode, and CLI agents as MCP tools')
-    .version('1.0.0');
+    .version('0.1.0');
 
   program
     .command('start')
-    .description('Start the Agent-MCP Server over stdio or HTTP-SSE transport')
-    .option('-c, --config <path>', 'Path to custom agent-mcp.config.json')
+    .description('Start the Agent Rack Server over stdio or HTTP-SSE transport')
+    .option('-c, --config <path>', 'Path to custom agent-rack.config.json')
     .option('-t, --transport <type>', 'Transport mode: stdio or sse')
     .option('-p, --port <number>', 'HTTP port when using SSE transport', (val) => parseInt(val, 10))
     .action(async (options) => {
@@ -49,23 +50,23 @@ export function runCLI() {
           port: options.port,
         });
       } catch (err) {
-        console.error('Failed to start Agent-MCP Server:', err);
+        console.error('Failed to start Agent Rack Server:', err);
         process.exit(1);
       }
     });
 
   program
     .command('install')
-    .description('Automatically install and register agent-mcp into Claude Code CLI or Claude Desktop')
+    .description('Automatically install and register agent-rack into Claude Code CLI or Claude Desktop')
     .option('--target <target>', 'Target: claude (Claude Code CLI) or desktop (Claude Desktop App)', 'claude')
     .action(async (options) => {
       const binPath = resolveBinPath();
 
       if (options.target === 'claude') {
         try {
-          console.log('Registering agent-mcp with Claude Code CLI...');
-          await execa('claude', ['mcp', 'add', 'agent-mcp', '--', 'node', binPath, 'start'], { stdio: 'inherit' });
-          console.log('\n✓ Successfully added agent-mcp to Claude Code CLI!');
+          console.log('Registering agent-rack with Claude Code CLI...');
+          await execa('claude', ['mcp', 'add', 'agent-rack', '--', 'node', binPath, 'start'], { stdio: 'inherit' });
+          console.log('\n✓ Successfully added agent-rack to Claude Code CLI!');
         } catch (err) {
           console.error('✗ Failed to register with Claude Code CLI:', err instanceof Error ? err.message : String(err));
         }
@@ -78,12 +79,55 @@ export function runCLI() {
             desktopConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
           }
           desktopConfig.mcpServers = desktopConfig.mcpServers || {};
-          desktopConfig.mcpServers['agent-mcp'] = buildMcpServerSnippet().mcpServers['agent-mcp'];
+          desktopConfig.mcpServers['agent-rack'] = buildMcpServerSnippet().mcpServers['agent-rack'];
 
           const dir = path.dirname(configPath);
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
           fs.writeFileSync(configPath, JSON.stringify(desktopConfig, null, 2), 'utf-8');
-          console.log(`\n✓ Successfully added agent-mcp to Claude Desktop config at:\n  ${configPath}`);
+          console.log(`\n✓ Successfully added agent-rack to Claude Desktop config at:\n  ${configPath}`);
+        } catch (err) {
+          console.error('✗ Failed to update Claude Desktop config:', err instanceof Error ? err.message : String(err));
+        }
+      }
+    });
+
+  program
+    .command('uninstall')
+    .description('Remove agent-rack from Claude Code CLI or Claude Desktop')
+    .option('--target <target>', 'Target: claude (Claude Code CLI) or desktop (Claude Desktop App)', 'claude')
+    .action(async (options) => {
+      if (options.target === 'claude') {
+        try {
+          console.log('Removing agent-rack from Claude Code CLI...');
+          await execa('claude', ['mcp', 'remove', 'agent-rack'], { stdio: 'inherit' });
+          console.log('\n✓ Successfully removed agent-rack from Claude Code CLI!');
+        } catch (err) {
+          console.error('✗ Failed to remove from Claude Code CLI:', err instanceof Error ? err.message : String(err));
+        }
+      } else if (options.target === 'desktop') {
+        const configPath = path.join(os.homedir(), 'Library/Application Support/Claude/claude_desktop_config.json');
+
+        try {
+          if (!fs.existsSync(configPath)) {
+            console.log(`Nothing to remove — no Claude Desktop config found at:\n  ${configPath}`);
+            return;
+          }
+
+          const desktopConfig: any = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+          if (!desktopConfig.mcpServers?.['agent-rack']) {
+            console.log('Nothing to remove — agent-rack is not registered in Claude Desktop config.');
+            return;
+          }
+
+          const backupPath = `${configPath}.bak`;
+          fs.copyFileSync(configPath, backupPath);
+
+          delete desktopConfig.mcpServers['agent-rack'];
+          fs.writeFileSync(configPath, JSON.stringify(desktopConfig, null, 2), 'utf-8');
+
+          console.log(`\n✓ Successfully removed agent-rack from Claude Desktop config at:\n  ${configPath}`);
+          console.log(`  (backup saved to ${backupPath})`);
         } catch (err) {
           console.error('✗ Failed to update Claude Desktop config:', err instanceof Error ? err.message : String(err));
         }
@@ -92,10 +136,10 @@ export function runCLI() {
 
   program
     .command('config')
-    .description('Manage agent-mcp configuration')
+    .description('Manage agent-rack configuration')
     .command('init')
-    .description('Initialize a new starter agent-mcp.config.json file')
-    .option('-p, --path <path>', 'Output file path', './agent-mcp.config.json')
+    .description('Initialize a new starter agent-rack.config.json file')
+    .option('-p, --path <path>', 'Output file path', './agent-rack.config.json')
     .action((options) => {
       const config = getDefaultConfig(process.cwd());
       saveConfig(config, options.path);
@@ -104,8 +148,8 @@ export function runCLI() {
 
   program
     .command('config-check')
-    .description('Validate existing agent-mcp configuration')
-    .option('-c, --config <path>', 'Path to agent-mcp.config.json')
+    .description('Validate existing agent-rack configuration')
+    .option('-c, --config <path>', 'Path to agent-rack.config.json')
     .action((options) => {
       try {
         const { config, filePath } = loadConfig(options.config);
@@ -120,7 +164,7 @@ export function runCLI() {
   program
     .command('agents')
     .description('List configured agents and verify binary availability on $PATH')
-    .option('-c, --config <path>', 'Path to agent-mcp.config.json')
+    .option('-c, --config <path>', 'Path to agent-rack.config.json')
     .action(async (options) => {
       const { config } = loadConfig(options.config);
       console.log('\nRegistered Agents Status:\n');

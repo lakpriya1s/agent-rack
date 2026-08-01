@@ -1,16 +1,24 @@
 {
-  "name": "agent-mcp",
-  "version": "1.0.0",
+  "name": "agent-rack",
+  "version": "0.1.0",
   "description": "Model Context Protocol (MCP) Server for running agy, claude, opencode, and CLI AI coding agents as tools",
   "type": "module",
   "main": "./dist/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lakpriya1s/agent-rack.git"
+  },
+  "homepage": "https://github.com/lakpriya1s/agent-rack#readme",
+  "bugs": {
+    "url": "https://github.com/lakpriya1s/agent-rack/issues"
+  },
   "bin": {
-    "agent-mcp": "./bin/agent-mcp.js"
+    "agent-rack": "bin/agent-rack.js"
   },
   "files": [
     "dist",
     "bin",
-    "agent-mcp.config.example.json",
+    "agent-rack.config.example.json",
     "README.md"
   ],
   "scripts": {
@@ -32,8 +40,11 @@
     "opencode",
     "model-context-protocol"
   ],
-  "author": "",
+  "author": "Lakpriya Senevirathna",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "commander": "^15.0.0",
