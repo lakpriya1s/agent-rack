@@ -5,8 +5,8 @@
   <img src="./assets/agent-rack-logo-horizontal.svg" alt="agent-rack" width="480">
 </picture>
 
-**Run any local CLI coding agent as an MCP tool**<br>
-Ships with `claude`, `codex`, `opencode`, and Antigravity built in — bridge into any MCP-compliant client, from Claude Desktop and Cursor to VS Code or your own orchestrator.
+**Bridge any CLI coding agent into any MCP client**<br>
+Ships with Claude Code, Codex, opencode, and Antigravity built in.
 
 [![npm](https://img.shields.io/npm/v/agent-rack?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/agent-rack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
@@ -20,7 +20,7 @@ Ships with `claude`, `codex`, `opencode`, and Antigravity built in — bridge in
 Protocol](https://modelcontextprotocol.io) server. It ships with four agents built in —
 `claude`, `codex`, `opencode`, and Antigravity (`agy`) — but isn't limited to them: any other
 local CLI coding agent can be wired in with a small adapter (see
-[Adding a new agent](#adding-a-new-agent)). Point any MCP client at it, and it spawns sub-agents
+[Connecting your own CLI agent](#connecting-your-own-cli-agent)). Point any MCP client at it, and it spawns sub-agents
 synchronously for one-shot tasks, or as background sessions with log streaming, follow-up
 input, and cancellation.
 
@@ -413,19 +413,74 @@ Safe to run even if it was never registered — it reports "nothing to remove" r
 failing. This only unregisters the MCP server; it doesn't uninstall the npm package itself
 (`npm uninstall -g agent-rack` if you installed it globally).
 
-## Adding a new agent
+## Connecting your own CLI agent
 
-Wiring in a CLI agent that isn't one of the four built-ins:
+There are two ways to wire in a CLI agent that isn't one of the four built-ins, depending on
+how it behaves.
+
+### Option A — config only, no code changes
+
+If your CLI is any ordinary **interactive terminal program** (it prompts, prints, maybe asks
+for confirmation) — not necessarily one that emits structured JSON — you can drive it as-is
+using the built-in `pty_interactive` transport, the same one `opencode` uses. It runs your CLI
+in a real pseudo-terminal, strips ANSI escape codes, and treats each line of output as plain
+text. Add an entry to your config's `agents` map (see [Configuration](#configuration)) —
+no source changes, no rebuild:
+
+```json
+{
+  "agents": {
+    "my-agent": {
+      "name": "My Custom Agent",
+      "command": "my-agent-cli",
+      "args": ["--non-interactive"],
+      "transport": "pty_interactive",
+      "env": {},
+      "description": "My custom CLI coding agent"
+    }
+  }
+}
+```
+
+It's immediately usable as `agent_run` with `agent: "my-agent"`, and gets its own shorthand
+tool, `my-agent_run`. The tradeoff: everything the CLI prints comes back as plain `text` events
+— no structured `tool_call`/`tool_result` breakdown, since the adapter doesn't know your CLI's
+output format.
+
+### Option B — a real adapter, for structured output
+
+If your CLI emits a JSON event stream (or another parseable structured format) and you want
+`agent_run`'s output broken into proper `tool_call`/`tool_result` events (like `claude` and
+`codex` get), you implement the `AgentAdapter` interface (`src/adapters/base.ts`):
+
+```typescript
+export interface AgentAdapter {
+  readonly transportType: string;
+  getCLIArgs(prompt: string, mode?: string): string[];
+  parseChunk(chunk: string): ParsedAgentEvent[];
+  formatResponse(events: ParsedAgentEvent[], exitCode?: number): FormattedResult;
+}
+```
+
+- `getCLIArgs` builds the argv for a single run, given the prompt and an optional mode.
+- `parseChunk` is called on every stdout/stderr chunk as it streams in; return zero or more
+  `ParsedAgentEvent`s (`type: 'text' | 'tool_call' | 'tool_result' | 'thought' | 'status' | 'error'`).
+- `formatResponse` runs once the process exits, reducing all accumulated events into a
+  `FormattedResult` (`summary`, `rawText`, `toolCalls`, `events`, `exitCode`).
+
+`src/adapters/agy.ts` is the shortest real example to copy from. Since transports are compiled
+in rather than dynamically loaded, this path requires a local clone (there's no runtime plugin
+API yet):
 
 1. Add a case to `AgentTransportTypeSchema` in `src/config/schema.ts`.
-2. Implement `AgentAdapter` in `src/adapters/` (parse its output into `ParsedAgentEvent[]`,
-   format a `FormattedResult`).
+2. Implement `AgentAdapter` in `src/adapters/`.
 3. Wire it into `createAdapter` in `src/adapters/index.ts`.
 4. If the CLI has a permission-skip / sandbox-bypass flag, add it to `ESCAPE_HATCH_ARGS` and
    `getReadOnlyMode` in `src/engine/review.ts` so `agent_review` can strip it and enforce
    read-only reviews natively.
 5. Add a default entry in `getDefaultConfig` (`src/config/loader.ts`) and
    `agent-rack.config.example.json`, or just add one to your own config's `agents` map.
+6. `pnpm build` and run from your local checkout, or open a PR to get it merged upstream.
 
 ## Documentation index
 
