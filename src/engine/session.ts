@@ -3,8 +3,11 @@ import { AgentConfig, AgentMCPConfig } from '../config/schema.js';
 import { createAdapter, FormattedResult } from '../adapters/index.js';
 import { AgentProcessController, ProcessRunOptions } from './process.js';
 import { validateWorkspacePath } from '../security/workspace.js';
+import { extractAndValidateReview, ReviewOutput } from './review.js';
 
 export type SessionStatus = 'running' | 'idle' | 'completed' | 'failed' | 'cancelled';
+
+export type SessionKind = 'task' | 'review';
 
 export interface AgentSessionInfo {
   sessionId: string;
@@ -15,6 +18,7 @@ export interface AgentSessionInfo {
   workspace: string;
   summary?: string;
   eventCount: number;
+  review?: ReviewOutput;
 }
 
 export class AgentSession {
@@ -24,11 +28,13 @@ export class AgentSession {
   public readonly controller: AgentProcessController;
   public result?: FormattedResult;
   public error?: string;
+  public reviewResult?: ReviewOutput;
 
   constructor(
     public readonly agentId: string,
     public readonly agentConfig: AgentConfig,
-    public readonly workspace: string
+    public readonly workspace: string,
+    public readonly kind: SessionKind = 'task'
   ) {
     this.id = randomUUID();
     this.createdAt = new Date().toISOString();
@@ -46,6 +52,7 @@ export class AgentSession {
       workspace: this.workspace,
       summary: this.result?.summary || this.error,
       eventCount: this.controller.getBuffer().size(),
+      review: this.reviewResult,
     };
   }
 }
@@ -59,7 +66,8 @@ export class SessionManager {
     agentId: string,
     prompt: string,
     workspace?: string,
-    mode?: string
+    mode?: string,
+    options?: { kind?: SessionKind }
   ): AgentSession {
     const activeCount = Array.from(this.sessions.values()).filter((s) => s.status === 'running').length;
     const maxAllowed = this.config.security?.maxConcurrentSessions || 5;
@@ -76,11 +84,11 @@ export class SessionManager {
     const targetWorkspace = workspace || this.config.allowedWorkspaces[0];
     validateWorkspacePath(targetWorkspace, this.config.allowedWorkspaces);
 
-    const session = new AgentSession(agentId, agentConfig, targetWorkspace);
+    const session = new AgentSession(agentId, agentConfig, targetWorkspace, options?.kind ?? 'task');
     this.sessions.set(session.id, session);
 
     // Run session asynchronously in background
-    const options: ProcessRunOptions = {
+    const runOptions: ProcessRunOptions = {
       prompt,
       workspace: targetWorkspace,
       mode,
@@ -89,10 +97,13 @@ export class SessionManager {
     };
 
     session.controller
-      .runSync(options)
+      .runSync(runOptions)
       .then((result) => {
         session.result = result;
         session.status = 'completed';
+        if (session.kind === 'review') {
+          session.reviewResult = extractAndValidateReview(result.summary);
+        }
       })
       .catch((err) => {
         session.error = err instanceof Error ? err.message : String(err);

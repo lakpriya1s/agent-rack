@@ -39,3 +39,55 @@ describe('SessionManager', () => {
     expect(() => manager.createSession('test_echo', 'world')).toThrow(/Maximum concurrent sessions limit/);
   });
 });
+
+async function waitForSessionCompletion(manager: SessionManager, sessionId: string, timeoutMs = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const session = manager.getSession(sessionId);
+    if (session && session.status !== 'running') return session;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('Timed out waiting for session to complete');
+}
+
+describe('SessionManager review sessions', () => {
+  it('tags a session as kind "task" by default', () => {
+    const config = getDefaultConfig();
+    config.agents['test_echo'] = {
+      name: 'Echo Test',
+      command: 'echo',
+      args: [],
+      transport: 'pty_interactive',
+      env: {},
+    };
+    const manager = new SessionManager(config);
+
+    const session = manager.createSession('test_echo', 'hello');
+    expect(session.kind).toBe('task');
+    expect(session.getInfo().review).toBeUndefined();
+  });
+
+  it('parses and attaches structured review output for kind "review" sessions', async () => {
+    const config = getDefaultConfig();
+    const reviewPayload = JSON.stringify({
+      verdict: 'approve',
+      summary: 'Nothing concerning found.',
+      findings: [],
+      next_steps: [],
+    });
+    config.agents['fake_reviewer'] = {
+      name: 'Fake Reviewer',
+      command: 'node',
+      args: ['-e', `console.log(JSON.stringify({ type: 'text', text: ${JSON.stringify(reviewPayload)} }))`],
+      transport: 'claude_stream_json',
+      env: {},
+    };
+    const manager = new SessionManager(config);
+
+    const session = manager.createSession('fake_reviewer', 'review this', undefined, undefined, { kind: 'review' });
+    const completed = await waitForSessionCompletion(manager, session.id);
+
+    expect(completed.status).toBe('completed');
+    expect(completed.getInfo().review?.verdict).toBe('approve');
+  });
+});
