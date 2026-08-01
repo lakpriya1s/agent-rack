@@ -42,8 +42,9 @@ automatically and adds slash commands (`/agent-rack:run`, `/agent-rack:review`, 
 ```
 
 For every other MCP client, no cloning, no config file to write by hand — just register it.
-Not sure which of `--target claude|codex|desktop` applies to you? Run the interactive wizard
-instead — it detects what's actually installed and asks before registering with each:
+Not sure which targets apply to you? Run the interactive wizard instead — it detects what's
+actually installed (including project-local `.claude`/`.cursor` folders, offering
+project-vs-global registration for those two) and asks before registering with each:
 
 ```sh
 npx agent-rack setup
@@ -52,11 +53,18 @@ npx agent-rack setup
 Or register with a specific target directly:
 
 ```sh
-npx agent-rack install --target claude     # Claude Code CLI
-npx agent-rack install --target codex      # Codex CLI
-npx agent-rack install --target desktop    # Claude Desktop
-npx agent-rack snippet cursor              # print a snippet to paste anywhere else
+npx agent-rack install --target claude       # Claude Code CLI
+npx agent-rack install --target codex        # Codex CLI
+npx agent-rack install --target desktop      # Claude Desktop
+npx agent-rack install --target cursor       # Cursor
+npx agent-rack install --target antigravity  # Antigravity
+npx agent-rack install --target opencode     # OpenCode
+npx agent-rack snippet vscode                # print a snippet to paste anywhere else
 ```
+
+`claude` and `cursor` also accept `--scope project` to register only for the current project
+(a git-shareable `.mcp.json`/`.cursor/mcp.json` in the project root) instead of globally for
+every project — see [`install`](#install) below for details.
 
 Then restart your MCP client to pick up the new tools. That's it — with no config file present,
 agents are automatically scoped to whichever directory your MCP client launches the server
@@ -142,17 +150,26 @@ actually runs in the background — you won't normally invoke it by hand.
 agent-rack setup
 ```
 
-Interactive wizard: detects whether `claude` and `codex` are on `$PATH` and whether Claude
-Desktop is installed, then asks (y/n, default yes) before registering with each — using the
-exact same logic as `install --target <target>` under the hood, just without you having to know
-which target values exist. Clients it doesn't detect (Cursor, VS Code, Antigravity, etc.) get a
-pointer to `agent-rack snippet <client>` at the end.
+Interactive wizard. First prints anything it detects in the **current project** — a `.claude`,
+`.cursor`, `.gemini`, `.agents`, or `.opencode` folder, mirroring what each of those tools itself
+looks for. Then, for each supported target, checks whether it's actually present (binary on
+`$PATH` for `claude`/`codex`/`opencode`, config directory existing for `desktop`/`cursor`/
+`antigravity`) and asks (y/n, default yes) before registering. For `claude` and `cursor`
+specifically — the two with a verified project-vs-global distinction — it asks a follow-up
+"just for this project?", defaulting to yes if that tool's project folder was detected, no
+otherwise. Everything else registers globally only. Clients it doesn't detect (VS Code, GitHub
+Copilot, etc.) get a pointer to `agent-rack snippet <client>` at the end.
 
 ```
+Detected in this project (/Users/you/project):
+  Claude Code CLI  .claude
+  Cursor           .cursor
+
 Let's set up agent-rack.
 
 Register with Claude Code CLI? [Y/n] y
-Registering agent-rack with Claude Code CLI...
+  Just for this project (not globally)? [Y/n] y
+Registering agent-rack with Claude Code CLI (scope: project)...
 ✓ Successfully added agent-rack to Claude Code CLI!
 Register with Codex CLI? [Y/n] y
 Registering agent-rack with Codex CLI...
@@ -170,18 +187,18 @@ silently doing nothing.
 ### `install`
 
 ```sh
-agent-rack install --target claude|codex|desktop   # default: claude
+agent-rack install --target <target> [--scope project|user]   # default target: claude
 ```
 
-- `--target claude` — runs `claude mcp add agent-rack -- node <resolved-bin-path> start`,
-  registering the server with the Claude Code CLI.
-- `--target codex` — runs `codex mcp add agent-rack -- node <resolved-bin-path> start`,
-  registering the server with the Codex CLI.
-- `--target desktop` — merges an `mcpServers.agent-rack` entry into your Claude Desktop
-  config.
-- Any other target (e.g. `opencode`, `antigravity`, `cursor`) — these clients don't currently
-  expose a scriptable way to register an MCP server non-interactively, so `install` prints a
-  pointer to `agent-rack snippet <target>` instead of silently doing nothing.
+| Target | What happens |
+| --- | --- |
+| `claude` | `claude mcp add agent-rack -- node <resolved-bin-path> start`. `--scope` maps directly to Claude Code's own `-s local\|user\|project` flag; omitted, it uses Claude Code's own default (`local` — tied to this exact directory, not shared). `project` writes a git-shareable `.mcp.json` in the project root; `user` is available in every project. |
+| `codex` | `codex mcp add agent-rack -- node <resolved-bin-path> start` (global only — codex has no project-scope flag). |
+| `desktop` | Merges an `mcpServers.agent-rack` entry into Claude Desktop's config (macOS only). |
+| `cursor` | Merges an `mcpServers.agent-rack` entry into Cursor's `mcp.json`, plus copies agent-rack's two guidance skills into Cursor's `skills/` directory. `--scope user` (default) writes to `~/.cursor/`; `--scope project` writes to `<project>/.cursor/` instead. |
+| `antigravity` (alias `agy`) | Merges an `mcpServers.agent-rack` entry into `~/.gemini/config/mcp_config.json` (Antigravity shares Gemini's config namespace) and copies the same two guidance skills into `~/.gemini/config/skills/`. Global only. |
+| `opencode` | Merges an `mcp.agent-rack` entry into opencode's config (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`) — note this target uses a different config shape (`{ type: "local", command: [...] }`) than the others. Global only. |
+| anything else | Prints a pointer to `agent-rack snippet <target>` instead of silently doing nothing. |
 
 ```
 Registering agent-rack with Claude Code CLI...
@@ -191,14 +208,14 @@ Registering agent-rack with Claude Code CLI...
 ### `uninstall`
 
 ```sh
-agent-rack uninstall --target claude|codex|desktop   # default: claude
+agent-rack uninstall --target <target> [--scope project|user]   # default target: claude
 ```
 
-The inverse of `install`: `--target claude` runs `claude mcp remove agent-rack`;
-`--target codex` runs `codex mcp remove agent-rack`; `--target desktop` backs up
-`claude_desktop_config.json` to a `.bak` file alongside it, then removes the `agent-rack` entry.
-Safe to run even if it was never installed — it reports "nothing to remove"/"no automatic
-removal" instead of failing. See [Uninstall](#uninstall) below.
+The inverse of `install`, target-for-target, with the same `--scope` semantics for `claude`/
+`cursor`. `desktop`/`cursor`/`antigravity`/`opencode` all back up their config file to a `.bak`
+alongside it before removing the `agent-rack` entry. Safe to run even if it was never
+installed — it reports "nothing to remove"/"no automatic removal" instead of failing. See
+[Uninstall](#uninstall) below.
 
 ### `config init`
 
@@ -255,8 +272,9 @@ agent-rack snippet <client>
 ```
 
 Prints the `mcpServers` JSON block to paste into any MCP client's config by hand — for clients
-`install` doesn't automate (Cursor, VS Code, Antigravity). `<client>` is just a label in the
-printed message; the JSON itself is identical for every client.
+`install` doesn't automate (VS Code, GitHub Copilot, and anything else not listed in
+[`install`](#install)). `<client>` is just a label in the printed message; the JSON itself is
+identical for every client.
 
 ## MCP tools
 
@@ -458,13 +476,15 @@ you're on Node 20+ first.
 ## Uninstall
 
 ```sh
-agent-rack uninstall --target claude|codex|desktop   # default: claude
+agent-rack uninstall --target <target> [--scope project|user]   # default target: claude
 ```
 
-- `--target claude` — runs `claude mcp remove agent-rack`.
+- `--target claude` — runs `claude mcp remove agent-rack` (add `--scope` to match how it was
+  installed).
 - `--target codex` — runs `codex mcp remove agent-rack`.
-- `--target desktop` — backs up `claude_desktop_config.json` to a `.bak` file alongside it, then
-  removes the `agent-rack` entry.
+- `--target desktop|cursor|antigravity|opencode` — backs up that client's config file to a
+  `.bak` file alongside it, then removes the `agent-rack` entry (`--scope project` for `cursor`
+  if it was registered per-project).
 
 Safe to run even if it was never registered — it reports "nothing to remove" rather than
 failing. This only unregisters the MCP server; it doesn't uninstall the npm package itself

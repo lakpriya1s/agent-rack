@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import readline from 'readline';
+import { fileURLToPath } from 'url';
 import { execa } from 'execa';
 import { startAgentMCPServer } from '../server.js';
 import { loadConfig, getDefaultConfig, saveConfig } from '../config/loader.js';
@@ -17,6 +18,16 @@ function resolveBinPath(): string {
   return path.resolve(process.argv[1]);
 }
 
+/**
+ * Root of the installed package (two levels up from this compiled file at `dist/cli/index.js`).
+ * Used to locate the shipped plugin skill files at `plugins/agent-rack/skills/` regardless of
+ * whether this is running from a local checkout, a global npm install, or via `npx`.
+ */
+function packageRoot(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, '..', '..');
+}
+
 /** The `mcpServers` block every MCP client (Claude Desktop, Cursor, Antigravity) expects. */
 function buildMcpServerSnippet() {
   return {
@@ -29,15 +40,90 @@ function buildMcpServerSnippet() {
   };
 }
 
-/** macOS's Claude Desktop config path — the only platform `registerDesktop` supports today. */
+function readJsonConfig(configPath: string): any {
+  if (fs.existsSync(configPath)) {
+    return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  }
+  return {};
+}
+
+function writeJsonConfig(configPath: string, config: any): void {
+  const dir = path.dirname(configPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+}
+
+/** macOS's Claude Desktop config path — the only platform this target supports today. */
 function desktopConfigPath(): string {
   return path.join(os.homedir(), 'Library/Application Support/Claude/claude_desktop_config.json');
 }
 
-async function registerClaude(binPath: string): Promise<void> {
+/**
+ * Cursor's MCP config — verified shape: `{ mcpServers: { name: { command, args } } }`.
+ * Cursor reads both a global (`~/.cursor/mcp.json`) and a per-project
+ * (`<project>/.cursor/mcp.json`) config, same shape either way.
+ */
+function cursorConfigPath(scope: 'user' | 'project' = 'user'): string {
+  const base = scope === 'project' ? process.cwd() : os.homedir();
+  return path.join(base, '.cursor', 'mcp.json');
+}
+
+function cursorSkillsDir(scope: 'user' | 'project' = 'user'): string {
+  const base = scope === 'project' ? process.cwd() : os.homedir();
+  return path.join(base, '.cursor', 'skills');
+}
+
+/** Directory names impeccable's own (real, shipping) harness detector uses to recognize each tool's project-local footprint — reused here for detection, not file writing. */
+const PROJECT_DIR_HINTS: Record<string, string> = {
+  'Claude Code CLI': '.claude',
+  'Codex CLI': '.agents',
+  Cursor: '.cursor',
+  Antigravity: '.gemini',
+  OpenCode: '.opencode',
+};
+
+function hasProjectDir(name: string): boolean {
+  return fs.existsSync(path.join(process.cwd(), name));
+}
+
+/**
+ * Antigravity shares Gemini's config namespace: `~/.gemini/config/mcp_config.json`, same
+ * `mcpServers` shape as Cursor/Claude Desktop. Its own IDE data dir
+ * (`~/Library/Application Support/Antigravity IDE`) has no MCP config of its own.
+ */
+function antigravityConfigPath(): string {
+  return path.join(os.homedir(), '.gemini', 'config', 'mcp_config.json');
+}
+
+function antigravitySkillsDir(): string {
+  return path.join(os.homedir(), '.gemini', 'config', 'skills');
+}
+
+/** Same precedence opencode itself uses: $OPENCODE_CONFIG_DIR, then $XDG_CONFIG_HOME/opencode, then ~/.config/opencode. */
+function opencodeConfigDir(): string {
+  if (process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
+  if (process.env.XDG_CONFIG_HOME) return path.join(process.env.XDG_CONFIG_HOME, 'opencode');
+  return path.join(os.homedir(), '.config', 'opencode');
+}
+
+/** opencode's config — verified shape: `{ mcp: { name: { type: "local", command: [cmd, ...args] } } }` (combined argv array, different key name). */
+function opencodeConfigPath(): string {
+  return path.join(opencodeConfigDir(), 'opencode.json');
+}
+
+/**
+ * `scope` maps directly to Claude Code's own `-s, --scope <local|user|project>` flag (verified
+ * via `claude mcp add --help`). Omitted (undefined) preserves the CLI's own default ("local":
+ * tied to this exact directory, stored in the user's private config, not shared) rather than us
+ * silently picking a different default than before this option existed.
+ */
+async function registerClaude(binPath: string, scope?: string): Promise<void> {
+  const scopeArgs = scope ? ['-s', scope] : [];
   try {
-    console.log('Registering agent-rack with Claude Code CLI...');
-    await execa('claude', ['mcp', 'add', 'agent-rack', '--', 'node', binPath, 'start'], { stdio: 'inherit' });
+    console.log(`Registering agent-rack with Claude Code CLI${scope ? ` (scope: ${scope})` : ''}...`);
+    await execa('claude', ['mcp', 'add', ...scopeArgs, 'agent-rack', '--', 'node', binPath, 'start'], {
+      stdio: 'inherit',
+    });
     console.log('\n✓ Successfully added agent-rack to Claude Code CLI!');
   } catch (err) {
     console.error('✗ Failed to register with Claude Code CLI:', err instanceof Error ? err.message : String(err));
@@ -54,24 +140,119 @@ async function registerCodex(binPath: string): Promise<void> {
   }
 }
 
-function registerDesktop(): void {
-  const configPath = desktopConfigPath();
-  let desktopConfig: any = { mcpServers: {} };
-
+/** Shared by desktop/cursor/antigravity — all three use the identical `mcpServers` shape. */
+function registerIntoMcpServersConfig(configPath: string, label: string): void {
   try {
-    if (fs.existsSync(configPath)) {
-      desktopConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    }
-    desktopConfig.mcpServers = desktopConfig.mcpServers || {};
-    desktopConfig.mcpServers['agent-rack'] = buildMcpServerSnippet().mcpServers['agent-rack'];
-
-    const dir = path.dirname(configPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(configPath, JSON.stringify(desktopConfig, null, 2), 'utf-8');
-    console.log(`\n✓ Successfully added agent-rack to Claude Desktop config at:\n  ${configPath}`);
+    const config = readJsonConfig(configPath);
+    config.mcpServers = config.mcpServers || {};
+    config.mcpServers['agent-rack'] = buildMcpServerSnippet().mcpServers['agent-rack'];
+    writeJsonConfig(configPath, config);
+    console.log(`\n✓ Successfully added agent-rack to ${label} config at:\n  ${configPath}`);
   } catch (err) {
-    console.error('✗ Failed to update Claude Desktop config:', err instanceof Error ? err.message : String(err));
+    console.error(`✗ Failed to update ${label} config:`, err instanceof Error ? err.message : String(err));
   }
+}
+
+function registerDesktop(): void {
+  registerIntoMcpServersConfig(desktopConfigPath(), 'Claude Desktop');
+}
+
+function registerCursor(scope: 'user' | 'project' = 'user'): void {
+  const label = scope === 'project' ? 'Cursor (this project)' : 'Cursor';
+  registerIntoMcpServersConfig(cursorConfigPath(scope), label);
+  copySkillsTo(cursorSkillsDir(scope), label);
+}
+
+function registerAntigravity(): void {
+  registerIntoMcpServersConfig(antigravityConfigPath(), 'Antigravity');
+  copySkillsTo(antigravitySkillsDir(), 'Antigravity');
+}
+
+function registerOpenCode(binPath: string): void {
+  const configPath = opencodeConfigPath();
+  try {
+    const config = readJsonConfig(configPath);
+    if (!config.$schema) config.$schema = 'https://opencode.ai/config.json';
+    config.mcp = config.mcp || {};
+    config.mcp['agent-rack'] = { type: 'local', command: ['node', binPath, 'start'] };
+    writeJsonConfig(configPath, config);
+    console.log(`\n✓ Successfully added agent-rack to OpenCode config at:\n  ${configPath}`);
+  } catch (err) {
+    console.error('✗ Failed to update OpenCode config:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** Shared by cursor/antigravity uninstall — both use the identical `mcpServers` shape. */
+function unregisterFromMcpServersConfig(configPath: string, label: string): void {
+  try {
+    if (!fs.existsSync(configPath)) {
+      console.log(`Nothing to remove — no ${label} config found at:\n  ${configPath}`);
+      return;
+    }
+    const config = readJsonConfig(configPath);
+    if (!config.mcpServers?.['agent-rack']) {
+      console.log(`Nothing to remove — agent-rack is not registered in ${label} config.`);
+      return;
+    }
+    const backupPath = `${configPath}.bak`;
+    fs.copyFileSync(configPath, backupPath);
+    delete config.mcpServers['agent-rack'];
+    writeJsonConfig(configPath, config);
+    console.log(`\n✓ Successfully removed agent-rack from ${label} config at:\n  ${configPath}`);
+    console.log(`  (backup saved to ${backupPath})`);
+  } catch (err) {
+    console.error(`✗ Failed to update ${label} config:`, err instanceof Error ? err.message : String(err));
+  }
+}
+
+function unregisterOpenCode(): void {
+  const configPath = opencodeConfigPath();
+  try {
+    if (!fs.existsSync(configPath)) {
+      console.log(`Nothing to remove — no OpenCode config found at:\n  ${configPath}`);
+      return;
+    }
+    const config = readJsonConfig(configPath);
+    if (!config.mcp?.['agent-rack']) {
+      console.log('Nothing to remove — agent-rack is not registered in OpenCode config.');
+      return;
+    }
+    const backupPath = `${configPath}.bak`;
+    fs.copyFileSync(configPath, backupPath);
+    delete config.mcp['agent-rack'];
+    writeJsonConfig(configPath, config);
+    console.log(`\n✓ Successfully removed agent-rack from OpenCode config at:\n  ${configPath}`);
+    console.log(`  (backup saved to ${backupPath})`);
+  } catch (err) {
+    console.error('✗ Failed to update OpenCode config:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Copies agent-rack's guidance skills (tool-selection, review-handling — the same ones shipped
+ * in the Claude Code plugin) into another tool's global skills directory, prefixed with
+ * `agent-rack-` to avoid colliding with any other package's same-named skill. Best-effort: a
+ * missing source (e.g. running from a dev checkout without a full build) just skips silently
+ * rather than failing the whole registration.
+ */
+function copySkillsTo(skillsDir: string, label: string): void {
+  const sourceRoot = path.join(packageRoot(), 'plugins', 'agent-rack', 'skills');
+  const skillNames = ['tool-selection', 'review-handling'];
+
+  for (const name of skillNames) {
+    const sourceFile = path.join(sourceRoot, name, 'SKILL.md');
+    if (!fs.existsSync(sourceFile)) continue;
+
+    const destDir = path.join(skillsDir, `agent-rack-${name}`);
+    try {
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.copyFileSync(sourceFile, path.join(destDir, 'SKILL.md'));
+    } catch (err) {
+      console.error(`✗ Failed to copy '${name}' skill into ${label}:`, err instanceof Error ? err.message : String(err));
+      return;
+    }
+  }
+  console.log(`✓ Copied agent-rack guidance skills into ${label} at:\n  ${skillsDir}`);
 }
 
 /**
@@ -94,13 +275,18 @@ function askYesNo(rl: readline.Interface, question: string, defaultYes: boolean)
   });
 }
 
+const INSTALL_TARGETS_HELP =
+  'claude (Claude Code CLI), codex (Codex CLI), desktop (Claude Desktop App), cursor (Cursor), ' +
+  'antigravity or agy (Antigravity), opencode (OpenCode). Any other value falls back to printing ' +
+  "a manual snippet via 'snippet <target>'.";
+
 export function runCLI() {
   const program = new Command();
 
   program
     .name('agent-rack')
     .description('Model Context Protocol (MCP) Server driving agy, claude, opencode, and CLI agents as MCP tools')
-    .version('0.1.5');
+    .version('0.1.6');
 
   program
     .command('start')
@@ -123,21 +309,27 @@ export function runCLI() {
 
   program
     .command('install')
-    .description('Automatically install and register agent-rack into Claude Code CLI, Codex CLI, or Claude Desktop')
+    .description('Automatically install and register agent-rack into a supported MCP client')
+    .option('--target <target>', `Target: ${INSTALL_TARGETS_HELP}`, 'claude')
     .option(
-      '--target <target>',
-      "Target: claude (Claude Code CLI), codex (Codex CLI), or desktop (Claude Desktop App). Any other value falls back to printing a manual snippet via 'snippet <target>'.",
-      'claude'
+      '--scope <scope>',
+      "project or user (global). Only applies to --target claude|cursor. claude defaults to Claude Code's own default (local) when omitted; cursor defaults to user."
     )
     .action(async (options) => {
       const binPath = resolveBinPath();
 
       if (options.target === 'claude') {
-        await registerClaude(binPath);
+        await registerClaude(binPath, options.scope);
       } else if (options.target === 'codex') {
         await registerCodex(binPath);
       } else if (options.target === 'desktop') {
         registerDesktop();
+      } else if (options.target === 'cursor') {
+        registerCursor(options.scope === 'project' ? 'project' : 'user');
+      } else if (options.target === 'antigravity' || options.target === 'agy') {
+        registerAntigravity();
+      } else if (options.target === 'opencode') {
+        registerOpenCode(binPath);
       } else {
         console.log(`No automatic registration is available for target '${options.target}' yet.`);
         console.log(`Run \`agent-rack snippet ${options.target}\` to print the mcpServers JSON, then add it to that client's config by hand.`);
@@ -158,46 +350,110 @@ export function runCLI() {
           '\nUse the explicit commands instead:\n' +
             '  agent-rack install --target claude\n' +
             '  agent-rack install --target codex\n' +
-            '  agent-rack install --target desktop'
+            '  agent-rack install --target desktop\n' +
+            '  agent-rack install --target cursor\n' +
+            '  agent-rack install --target antigravity\n' +
+            '  agent-rack install --target opencode'
         );
         process.exitCode = 1;
         return;
       }
 
       const binPath = resolveBinPath();
+
+      const projectHits = Object.entries(PROJECT_DIR_HINTS).filter(([, dir]) => hasProjectDir(dir));
+      if (projectHits.length > 0) {
+        console.log(`Detected in this project (${process.cwd()}):`);
+        for (const [label, dir] of projectHits) {
+          console.log(`  ${label.padEnd(16)} ${dir}`);
+        }
+        console.log('');
+      }
+
       console.log("Let's set up agent-rack.\n");
 
-      const [hasClaude, hasCodex] = await Promise.all([isBinaryAvailable('claude'), isBinaryAvailable('codex')]);
+      const [hasClaude, hasCodex, hasOpenCode] = await Promise.all([
+        isBinaryAvailable('claude'),
+        isBinaryAvailable('codex'),
+        isBinaryAvailable('opencode'),
+      ]);
       const hasDesktop = fs.existsSync(path.dirname(desktopConfigPath()));
+      const hasCursor = fs.existsSync(path.dirname(cursorConfigPath()));
+      const hasAntigravity = fs.existsSync(path.dirname(antigravityConfigPath()));
+      const projectClaude = hasProjectDir(PROJECT_DIR_HINTS['Claude Code CLI']);
+      const projectCursor = hasProjectDir(PROJECT_DIR_HINTS.Cursor);
 
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       let registeredAny = false;
 
-      if (hasClaude) {
-        if (await askYesNo(rl, 'Register with Claude Code CLI?', true)) {
-          await registerClaude(binPath);
-          registeredAny = true;
-        }
-      } else {
-        console.log("- Claude Code CLI not found on $PATH, skipping.");
-      }
+      /**
+       * `scopePrompt` is only present for targets with a verified project-vs-user distinction
+       * (claude, cursor). Its default answer follows whether a project-local dir was already
+       * detected — if you're sitting in a project that already has a `.claude`/`.cursor` folder,
+       * default to registering there; otherwise default to the global/user scope.
+       */
+      const steps: Array<{
+        detected: boolean;
+        label: string;
+        skipLabel: string;
+        scopePrompt?: { defaultProject: boolean };
+        run: (scope: 'user' | 'project') => void | Promise<void>;
+      }> = [
+        {
+          detected: hasClaude,
+          label: 'Claude Code CLI',
+          skipLabel: 'Claude Code CLI not found on $PATH',
+          scopePrompt: { defaultProject: projectClaude },
+          run: (scope) => registerClaude(binPath, scope === 'project' ? 'project' : undefined),
+        },
+        {
+          detected: hasCodex,
+          label: 'Codex CLI',
+          skipLabel: 'Codex CLI not found on $PATH',
+          run: () => registerCodex(binPath),
+        },
+        {
+          detected: hasDesktop,
+          label: 'Claude Desktop',
+          skipLabel: 'Claude Desktop not found',
+          run: () => registerDesktop(),
+        },
+        {
+          detected: hasCursor,
+          label: 'Cursor',
+          skipLabel: 'Cursor not found',
+          scopePrompt: { defaultProject: projectCursor },
+          run: (scope) => registerCursor(scope),
+        },
+        {
+          detected: hasAntigravity,
+          label: 'Antigravity',
+          skipLabel: 'Antigravity not found',
+          run: () => registerAntigravity(),
+        },
+        {
+          detected: hasOpenCode,
+          label: 'OpenCode',
+          skipLabel: 'OpenCode not found on $PATH',
+          run: () => registerOpenCode(binPath),
+        },
+      ];
 
-      if (hasCodex) {
-        if (await askYesNo(rl, 'Register with Codex CLI?', true)) {
-          await registerCodex(binPath);
-          registeredAny = true;
+      for (const step of steps) {
+        if (!step.detected) {
+          console.log(`- ${step.skipLabel}, skipping.`);
+          continue;
         }
-      } else {
-        console.log("- Codex CLI not found on $PATH, skipping.");
-      }
+        if (!(await askYesNo(rl, `Register with ${step.label}?`, true))) continue;
 
-      if (hasDesktop) {
-        if (await askYesNo(rl, 'Register with Claude Desktop?', true)) {
-          registerDesktop();
-          registeredAny = true;
+        let scope: 'user' | 'project' = 'user';
+        if (step.scopePrompt) {
+          scope = (await askYesNo(rl, '  Just for this project (not globally)?', step.scopePrompt.defaultProject))
+            ? 'project'
+            : 'user';
         }
-      } else {
-        console.log("- Claude Desktop not found, skipping.");
+        await step.run(scope);
+        registeredAny = true;
       }
 
       rl.close();
@@ -208,24 +464,22 @@ export function runCLI() {
           : '\nNothing was registered.'
       );
       console.log(
-        "\nUsing a different MCP client (Cursor, VS Code, Antigravity, etc.)? Run " +
+        "\nUsing a different MCP client (VS Code, GitHub Copilot, etc.)? Run " +
           "`agent-rack snippet <client>` to print a config snippet to paste in by hand."
       );
     });
 
   program
     .command('uninstall')
-    .description('Remove agent-rack from Claude Code CLI, Codex CLI, or Claude Desktop')
-    .option(
-      '--target <target>',
-      'Target: claude (Claude Code CLI), codex (Codex CLI), or desktop (Claude Desktop App)',
-      'claude'
-    )
+    .description('Remove agent-rack from a supported MCP client')
+    .option('--target <target>', `Target: ${INSTALL_TARGETS_HELP}`, 'claude')
+    .option('--scope <scope>', 'project or user (global). Only applies to --target claude|cursor, matching install.')
     .action(async (options) => {
       if (options.target === 'claude') {
+        const scopeArgs = options.scope ? ['-s', options.scope] : [];
         try {
-          console.log('Removing agent-rack from Claude Code CLI...');
-          await execa('claude', ['mcp', 'remove', 'agent-rack'], { stdio: 'inherit' });
+          console.log(`Removing agent-rack from Claude Code CLI${options.scope ? ` (scope: ${options.scope})` : ''}...`);
+          await execa('claude', ['mcp', 'remove', ...scopeArgs, 'agent-rack'], { stdio: 'inherit' });
           console.log('\n✓ Successfully removed agent-rack from Claude Code CLI!');
         } catch (err) {
           console.error('✗ Failed to remove from Claude Code CLI:', err instanceof Error ? err.message : String(err));
@@ -239,32 +493,14 @@ export function runCLI() {
           console.error('✗ Failed to remove from Codex CLI:', err instanceof Error ? err.message : String(err));
         }
       } else if (options.target === 'desktop') {
-        const configPath = path.join(os.homedir(), 'Library/Application Support/Claude/claude_desktop_config.json');
-
-        try {
-          if (!fs.existsSync(configPath)) {
-            console.log(`Nothing to remove — no Claude Desktop config found at:\n  ${configPath}`);
-            return;
-          }
-
-          const desktopConfig: any = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-
-          if (!desktopConfig.mcpServers?.['agent-rack']) {
-            console.log('Nothing to remove — agent-rack is not registered in Claude Desktop config.');
-            return;
-          }
-
-          const backupPath = `${configPath}.bak`;
-          fs.copyFileSync(configPath, backupPath);
-
-          delete desktopConfig.mcpServers['agent-rack'];
-          fs.writeFileSync(configPath, JSON.stringify(desktopConfig, null, 2), 'utf-8');
-
-          console.log(`\n✓ Successfully removed agent-rack from Claude Desktop config at:\n  ${configPath}`);
-          console.log(`  (backup saved to ${backupPath})`);
-        } catch (err) {
-          console.error('✗ Failed to update Claude Desktop config:', err instanceof Error ? err.message : String(err));
-        }
+        unregisterFromMcpServersConfig(desktopConfigPath(), 'Claude Desktop');
+      } else if (options.target === 'cursor') {
+        const scope = options.scope === 'project' ? 'project' : 'user';
+        unregisterFromMcpServersConfig(cursorConfigPath(scope), scope === 'project' ? 'Cursor (this project)' : 'Cursor');
+      } else if (options.target === 'antigravity' || options.target === 'agy') {
+        unregisterFromMcpServersConfig(antigravityConfigPath(), 'Antigravity');
+      } else if (options.target === 'opencode') {
+        unregisterOpenCode();
       } else {
         console.log(`No automatic removal is available for target '${options.target}'.`);
         console.log(`If you registered it manually via a printed snippet, remove that entry from the client's config by hand.`);
