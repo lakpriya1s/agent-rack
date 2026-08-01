@@ -5,8 +5,8 @@
   <img src="./assets/agent-rack-logo-horizontal.svg" alt="agent-rack" width="480">
 </picture>
 
-**Run `claude`, `codex`, `opencode`, and `agy` as MCP tools**<br>
-Bridge any local CLI coding agent into any MCP-compliant client — Claude Desktop, Claude Code, Cursor, VS Code, Antigravity, or your own orchestrator.
+**Run any local CLI coding agent as an MCP tool**<br>
+Ships with `claude`, `codex`, `opencode`, and Antigravity built in — bridge into any MCP-compliant client, from Claude Desktop and Cursor to VS Code or your own orchestrator.
 
 [![npm](https://img.shields.io/npm/v/agent-rack?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/agent-rack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
@@ -17,9 +17,12 @@ Bridge any local CLI coding agent into any MCP-compliant client — Claude Deskt
 ---
 
 `agent-rack` wraps command-line AI coding agents behind a single [Model Context
-Protocol](https://modelcontextprotocol.io) server. Point any MCP client at it, and it can spawn
-`claude`, `codex`, `opencode`, or `agy` as sub-agents — synchronously for one-shot tasks,
-or as background sessions with log streaming, follow-up input, and cancellation.
+Protocol](https://modelcontextprotocol.io) server. It ships with four agents built in —
+`claude`, `codex`, `opencode`, and Antigravity (`agy`) — but isn't limited to them: any other
+local CLI coding agent can be wired in with a small adapter (see
+[Adding a new agent](#adding-a-new-agent)). Point any MCP client at it, and it spawns sub-agents
+synchronously for one-shot tasks, or as background sessions with log streaming, follow-up
+input, and cancellation.
 
 It also ships a structured, adversarial-capable **code review** tool
 (`agent_review`) that runs read-only and returns validated JSON instead of free text.
