@@ -41,6 +41,36 @@ describe('SessionManager', () => {
   });
 });
 
+describe('SessionManager.listSessions', () => {
+  it('returns an empty array when no sessions exist', () => {
+    const config = getDefaultConfig();
+    const manager = new SessionManager(config);
+    expect(manager.listSessions()).toEqual([]);
+  });
+
+  it('returns sessions sorted by createdAt descending, and each includes its kind', async () => {
+    const config = getDefaultConfig();
+    config.agents['test_echo'] = {
+      name: 'Echo Test',
+      command: 'echo',
+      args: [],
+      transport: 'pty_interactive',
+      env: {},
+    };
+    const manager = new SessionManager(config);
+
+    const first = manager.createSession('test_echo', 'one');
+    await waitForSessionCompletion(manager, first.id);
+    const second = manager.createSession('test_echo', 'two', undefined, undefined, { kind: 'review' });
+    await waitForSessionCompletion(manager, second.id);
+
+    const listed = manager.listSessions();
+    expect(listed.map((s) => s.id)).toEqual([second.id, first.id]);
+    expect(listed[0].getInfo().kind).toBe('review');
+    expect(listed[1].getInfo().kind).toBe('task');
+  });
+});
+
 describe('SessionManager review sessions', () => {
   it('tags a session as kind "task" by default', () => {
     const config = getDefaultConfig();

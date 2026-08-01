@@ -19,6 +19,7 @@ export interface AgentSessionInfo {
   summary?: string;
   eventCount: number;
   review?: ReviewOutput;
+  kind: SessionKind;
 }
 
 export class AgentSession {
@@ -53,6 +54,7 @@ export class AgentSession {
       summary: this.result?.summary || this.error,
       eventCount: this.controller.getBuffer().size(),
       review: this.reviewResult,
+      kind: this.kind,
     };
   }
 }
@@ -121,6 +123,12 @@ export class SessionManager {
 
   getSession(sessionId: string): AgentSession | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  listSessions(): AgentSession[] {
+    return Array.from(this.sessions.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
   }
 
   cancelSession(sessionId: string): AgentSession {
