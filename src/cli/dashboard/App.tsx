@@ -9,6 +9,7 @@ import { SystemView } from './SystemView.js';
 import { ReviewView } from './ReviewView.js';
 import { LauncherModal } from './LauncherModal.js';
 import { SendInputModal } from './SendInputModal.js';
+import { computeLaunchAgentConfig } from './launch.js';
 
 interface AppProps {
   config: AgentMCPConfig;
@@ -81,9 +82,19 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath }) => {
     }
   });
 
-  const handleLaunch = (agentId: string, prompt: string, workspace: string, kind: 'task' | 'review') => {
+  const handleLaunch = (
+    agentId: string,
+    prompt: string,
+    workspace: string,
+    kind: 'task' | 'review',
+    model?: string
+  ) => {
     try {
-      const session = sessionManager.createSession(agentId, prompt, workspace, undefined, { kind });
+      const agentConfigOverride = computeLaunchAgentConfig(config.agents[agentId], model);
+      const session = sessionManager.createSession(agentId, prompt, workspace, undefined, {
+        kind,
+        agentConfigOverride,
+      });
       setSessions((prev) => [session, ...prev]);
       setSelectedIndex(0);
       setActiveTab('sessions');

@@ -4,7 +4,7 @@ import { Box, Text, useInput } from 'ink';
 interface LauncherModalProps {
   availableAgents: string[];
   workspaces: string[];
-  onLaunch: (agentId: string, prompt: string, workspace: string, kind: 'task' | 'review') => void;
+  onLaunch: (agentId: string, prompt: string, workspace: string, kind: 'task' | 'review', model?: string) => void;
   onCancel: () => void;
 }
 
@@ -16,8 +16,9 @@ export const LauncherModal: React.FC<LauncherModalProps> = ({
 }) => {
   const [selectedAgentIdx, setSelectedAgentIdx] = useState(0);
   const [kind, setKind] = useState<'task' | 'review'>('task');
+  const [model, setModel] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [activeField, setActiveField] = useState<'agent' | 'kind' | 'prompt' | 'submit'>('agent');
+  const [activeField, setActiveField] = useState<'agent' | 'kind' | 'model' | 'prompt' | 'submit'>('agent');
   const [error, setError] = useState<string | null>(null);
 
   const currentAgent = availableAgents[selectedAgentIdx] || 'claude';
@@ -41,7 +42,15 @@ export const LauncherModal: React.FC<LauncherModalProps> = ({
       if (key.leftArrow || key.rightArrow || key.upArrow || key.downArrow) {
         setKind((prev) => (prev === 'task' ? 'review' : 'task'));
       } else if (key.return || key.tab) {
+        setActiveField('model');
+      }
+    } else if (activeField === 'model') {
+      if (key.return || key.tab) {
         setActiveField('prompt');
+      } else if (key.backspace || key.delete) {
+        setModel((prev) => prev.slice(0, -1));
+      } else if (input && !key.ctrl && !key.meta) {
+        setModel((prev) => prev + input);
       }
     } else if (activeField === 'prompt') {
       if (key.return) {
@@ -59,7 +68,7 @@ export const LauncherModal: React.FC<LauncherModalProps> = ({
       }
     } else if (activeField === 'submit') {
       if (key.return) {
-        onLaunch(currentAgent, prompt, defaultWorkspace, kind);
+        onLaunch(currentAgent, prompt, defaultWorkspace, kind, model.trim() || undefined);
       } else if (key.upArrow || key.tab) {
         setActiveField('prompt');
       }
@@ -100,6 +109,19 @@ export const LauncherModal: React.FC<LauncherModalProps> = ({
         <Text bold color={kind === 'review' ? 'inverse' : 'magenta'}>
           [Code Review]
         </Text>
+      </Box>
+
+      {/* Model Override */}
+      <Box marginTop={1} flexDirection="column">
+        <Text bold color={activeField === 'model' ? 'yellow' : 'white'}>
+          Model (optional):
+        </Text>
+        <Box borderStyle="single" borderColor={activeField === 'model' ? 'yellow' : 'gray'} paddingX={1}>
+          <Text color="white">
+            {model || <Text color="gray" dimColor>Leave empty to use the agent's default</Text>}
+            {activeField === 'model' && <Text color="yellow">❚</Text>}
+          </Text>
+        </Box>
       </Box>
 
       {/* Prompt Input */}
