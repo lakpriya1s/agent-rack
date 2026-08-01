@@ -8,6 +8,7 @@ import { execa } from 'execa';
 import { startAgentMCPServer } from '../server.js';
 import { loadConfig, getDefaultConfig, saveConfig } from '../config/loader.js';
 import { listAgentAvailability, isBinaryAvailable } from '../engine/availability.js';
+import { handleCpCommand, copySkills } from './skills.js';
 
 /**
  * Path to the executable as MCP clients must spell it. Resolved from `process.argv[1]` — the
@@ -236,23 +237,15 @@ function unregisterOpenCode(): void {
  * rather than failing the whole registration.
  */
 function copySkillsTo(skillsDir: string, label: string): void {
-  const sourceRoot = path.join(packageRoot(), 'plugins', 'agent-rack', 'skills');
-  const skillNames = ['tool-selection', 'review-handling'];
-
-  for (const name of skillNames) {
-    const sourceFile = path.join(sourceRoot, name, 'SKILL.md');
-    if (!fs.existsSync(sourceFile)) continue;
-
-    const destDir = path.join(skillsDir, `agent-rack-${name}`);
-    try {
-      fs.mkdirSync(destDir, { recursive: true });
-      fs.copyFileSync(sourceFile, path.join(destDir, 'SKILL.md'));
-    } catch (err) {
-      console.error(`✗ Failed to copy '${name}' skill into ${label}:`, err instanceof Error ? err.message : String(err));
-      return;
-    }
+  try {
+    const copied = copySkills({
+      destSkillsDir: skillsDir,
+      packageRootPath: packageRoot(),
+    });
+    console.log(`✓ Copied ${copied.length} agent-rack skill(s) into ${label} at:\n  ${skillsDir}`);
+  } catch (err) {
+    console.error(`✗ Failed to copy skills into ${label}:`, err instanceof Error ? err.message : String(err));
   }
-  console.log(`✓ Copied agent-rack guidance skills into ${label} at:\n  ${skillsDir}`);
 }
 
 /**
@@ -286,7 +279,7 @@ export function runCLI() {
   program
     .name('agent-rack')
     .description('Model Context Protocol (MCP) Server driving agy, claude, opencode, and CLI agents as MCP tools')
-    .version('0.1.8');
+    .version('0.1.9');
 
   program
     .command('start')
@@ -561,6 +554,18 @@ export function runCLI() {
       console.log(`\nSample snippet for '${client}':\n`);
       console.log(JSON.stringify(buildMcpServerSnippet(), null, 2));
       console.log('');
+    });
+
+  program
+    .command('cp [dest]')
+    .alias('copy-skills')
+    .description('Copy agent-rack skill set to a project or agent skills directory')
+    .option('--target <target>', `Target: ${INSTALL_TARGETS_HELP}`)
+    .option('--scope <scope>', 'project (default) or user (global)')
+    .option('--skill <name>', 'Specific skill name to copy (default: all skills)')
+    .option('--prefix <prefix>', 'Prefix for skill directory names', 'agent-rack-')
+    .action((dest, options) => {
+      handleCpCommand(dest, options);
     });
 
   // Default subcommand: if no subcommand provided, launch server

@@ -64,6 +64,19 @@ npx agent-rack install --target opencode     # OpenCode
 npx agent-rack snippet vscode                # print a snippet to paste anywhere else
 ```
 
+### Copying skills to any project or agent
+
+You can also copy agent-rack's skill set directly to any project or agent skills directory using `agent-rack cp` (or `agent-rack copy-skills`):
+
+```sh
+agent-rack cp                                # auto-detects client folders in current directory and copies skills
+agent-rack cp --target cursor                # copies skills to .cursor/skills in current project
+agent-rack cp --target antigravity           # copies skills to .gemini/skills in current project
+agent-rack cp --target claude --scope user   # copies skills to ~/.claude/skills (global)
+agent-rack cp ./my-project                   # copies skills to ./my-project
+agent-rack cp ./my-project --target codex    # copies skills to ./my-project/.agents/skills
+```
+
 `claude` and `cursor` also accept `--scope project` to register only for the current project
 (a git-shareable `.mcp.json`/`.cursor/mcp.json` in the project root) instead of globally for
 every project — see [`install`](#install) below for details.

@@ -17,7 +17,7 @@ export async function createAgentMCPServer(configPath?: string) {
   const server = new Server(
     {
       name: 'agent-rack',
-      version: '0.1.8',
+      version: '0.1.9',
     },
     {
       capabilities: {
