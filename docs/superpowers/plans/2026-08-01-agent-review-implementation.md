@@ -797,8 +797,8 @@ function fakeReviewerConfig(reviewPayload: Record<string, unknown>) {
   return {
     name: 'Fake Reviewer',
     command: 'node',
-    args: ['-e', `console.log(JSON.stringify({ type: 'text', text: ${JSON.stringify(jsonText)} }))`],
-    transport: 'claude_stream_json' as const,
+    args: ['-e', `console.log(${JSON.stringify(jsonText)})`],
+    transport: 'pty_interactive' as const,
     env: {},
   };
 }
