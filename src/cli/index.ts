@@ -34,7 +34,7 @@ export function runCLI() {
   program
     .name('agent-rack')
     .description('Model Context Protocol (MCP) Server driving agy, claude, opencode, and CLI agents as MCP tools')
-    .version('0.1.1');
+    .version('0.1.2');
 
   program
     .command('start')
