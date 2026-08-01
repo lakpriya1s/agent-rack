@@ -3,3 +3,9 @@ dist/
 *.log
 .DS_Store
 .superpowers/
+
+# Local editor / MCP client wiring (contains absolute machine paths)
+.gemini/
+
+# Local runtime config — copy agent-mcp.config.example.json and edit
+agent-mcp.config.json

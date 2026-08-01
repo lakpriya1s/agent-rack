@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { execa } from 'execa';
 import { AgentConfig, AgentTransportType } from '../config/schema.js';
+import { FormattedResult } from '../adapters/base.js';
 
 export const ReviewFindingSchema = z.object({
   severity: z.enum(['critical', 'high', 'medium', 'low']),
@@ -103,6 +104,17 @@ export function extractAndValidateReview(rawText: string): ReviewOutput {
   }
 
   return parseErrorFallback(rawText);
+}
+
+/**
+ * Extracts the structured review from a completed agent run.
+ *
+ * Reads `rawText`, not `summary`: adapters append a "### Tool Calls Executed" block to
+ * summary, which corrupts JSON extraction (the review prompt guarantees the agent runs git
+ * commands, so there are always tool calls).
+ */
+export function reviewFromResult(result: FormattedResult): ReviewOutput {
+  return extractAndValidateReview(result.rawText || result.summary);
 }
 
 export function getReadOnlyMode(transport: AgentTransportType): string | undefined {

@@ -5,6 +5,27 @@ import os from 'os';
 import { execa } from 'execa';
 import { startAgentMCPServer } from '../server.js';
 import { loadConfig, getDefaultConfig, saveConfig } from '../config/loader.js';
+import { listAgentAvailability } from '../engine/availability.js';
+
+/**
+ * Path to the executable as MCP clients must spell it. Resolved against the *current
+ * directory*, so `install` and `snippet` are only correct when run from the repo root.
+ */
+function resolveBinPath(): string {
+  return path.resolve(process.cwd(), 'bin/agent-mcp.js');
+}
+
+/** The `mcpServers` block every MCP client (Claude Desktop, Cursor, Antigravity) expects. */
+function buildMcpServerSnippet() {
+  return {
+    mcpServers: {
+      'agent-mcp': {
+        command: 'node',
+        args: [resolveBinPath(), 'start'],
+      },
+    },
+  };
+}
 
 export function runCLI() {
   const program = new Command();
@@ -38,7 +59,7 @@ export function runCLI() {
     .description('Automatically install and register agent-mcp into Claude Code CLI or Claude Desktop')
     .option('--target <target>', 'Target: claude (Claude Code CLI) or desktop (Claude Desktop App)', 'claude')
     .action(async (options) => {
-      const binPath = path.resolve(process.cwd(), 'bin/agent-mcp.js');
+      const binPath = resolveBinPath();
 
       if (options.target === 'claude') {
         try {
@@ -57,10 +78,7 @@ export function runCLI() {
             desktopConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
           }
           desktopConfig.mcpServers = desktopConfig.mcpServers || {};
-          desktopConfig.mcpServers['agent-mcp'] = {
-            command: 'node',
-            args: [binPath, 'start'],
-          };
+          desktopConfig.mcpServers['agent-mcp'] = buildMcpServerSnippet().mcpServers['agent-mcp'];
 
           const dir = path.dirname(configPath);
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -107,20 +125,13 @@ export function runCLI() {
       const { config } = loadConfig(options.config);
       console.log('\nRegistered Agents Status:\n');
 
-      for (const [agentId, agentConfig] of Object.entries(config.agents)) {
-        let isAvailable = false;
-        try {
-          await execa('which', [agentConfig.command]);
-          isAvailable = true;
-        } catch {
-          isAvailable = false;
-        }
-
+      for (const agent of await listAgentAvailability(config)) {
+        const isAvailable = agent.status === 'available';
         const icon = isAvailable ? '✓' : '✗';
         const statusText = isAvailable ? 'AVAILABLE' : 'MISSING BINARY';
-        console.log(` ${icon} [${agentId}] ${agentConfig.name} (${agentConfig.command}) -> ${statusText}`);
-        console.log(`   Transport: ${agentConfig.transport}`);
-        console.log(`   Args: ${agentConfig.args.join(' ')}`);
+        console.log(` ${icon} [${agent.agentId}] ${agent.name} (${agent.command}) -> ${statusText}`);
+        console.log(`   Transport: ${agent.transport}`);
+        console.log(`   Args: ${config.agents[agent.agentId].args.join(' ')}`);
         console.log('');
       }
     });
@@ -130,18 +141,8 @@ export function runCLI() {
     .description('Generate MCP client configuration JSON snippet')
     .argument('<client>', 'Target client: claude-desktop, antigravity, cursor')
     .action((client) => {
-      const binPath = path.resolve(process.cwd(), 'bin/agent-mcp.js');
-      const snippet = {
-        mcpServers: {
-          'agent-mcp': {
-            command: 'node',
-            args: [binPath, 'start'],
-          },
-        },
-      };
-
       console.log(`\nSample snippet for '${client}':\n`);
-      console.log(JSON.stringify(snippet, null, 2));
+      console.log(JSON.stringify(buildMcpServerSnippet(), null, 2));
       console.log('');
     });
 

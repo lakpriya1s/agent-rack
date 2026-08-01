@@ -7,13 +7,22 @@
   "bin": {
     "agent-mcp": "./bin/agent-mcp.js"
   },
+  "files": [
+    "dist",
+    "bin",
+    "agent-mcp.config.example.json",
+    "README.md"
+  ],
   "scripts": {
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
+    "clean": "rm -rf dist",
     "build": "tsc",
+    "typecheck": "tsc -p tsconfig.test.json",
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm run clean && pnpm run build"
   },
   "keywords": [
     "mcp",

@@ -75,9 +75,19 @@ export async function createAgentMCPServer(configPath?: string) {
 }
 
 export async function startAgentMCPServer(options: { configPath?: string; transport?: 'stdio' | 'sse'; port?: number } = {}) {
-  const { server, config } = await createAgentMCPServer(options.configPath);
+  const { server, config, filePath } = await createAgentMCPServer(options.configPath);
   const targetTransport = options.transport || config.transport || 'stdio';
   const targetPort = options.port || config.port || 8765;
+
+  // No config file anywhere on the search path means `allowedWorkspaces` silently defaults
+  // to the current directory. That is the whole security boundary, so say so out loud.
+  if (!filePath) {
+    console.error(
+      `Warning: no agent-mcp config file found. Falling back to built-in defaults with ` +
+        `allowedWorkspaces=[${config.allowedWorkspaces.join(', ')}]. ` +
+        `Copy agent-mcp.config.example.json to agent-mcp.config.json to pin this explicitly.`
+    );
+  }
 
   if (targetTransport === 'sse') {
     const app = express();

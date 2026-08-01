@@ -1,4 +1,4 @@
-import { AgentAdapter, ParsedAgentEvent, FormattedResult } from './base.js';
+import { AgentAdapter, ParsedAgentEvent, FormattedResult, appendToolCallsBlock } from './base.js';
 
 /**
  * Valid values for Claude Code's `--permission-mode` flag (verified against CLI 2.1.220:
@@ -146,15 +146,8 @@ export class ClaudeStreamJsonAdapter implements AgentAdapter {
       summary = `Execution completed with exit code ${exitCode}. Executed ${toolCalls.length} tool calls.`;
     }
 
-    if (toolCalls.length > 0) {
-      summary += `\n\n### Tool Calls Executed (${toolCalls.length}):\n`;
-      for (const tc of toolCalls) {
-        summary += `- \`${tc.name}\`: ${JSON.stringify(tc.input)}\n`;
-      }
-    }
-
     return {
-      summary,
+      summary: appendToolCallsBlock(summary, toolCalls),
       rawText,
       toolCalls,
       events,

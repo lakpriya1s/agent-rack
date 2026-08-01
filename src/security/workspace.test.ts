@@ -4,7 +4,7 @@ import { validateWorkspacePath, SecurityError } from './workspace.js';
 import { sanitizeEnvironment } from './env.js';
 
 describe('Workspace Security Guard', () => {
-  const allowed = [path.resolve('/tmp/test-workspace'), path.resolve('/Volumes/External/agent-mcp')];
+  const allowed = [path.resolve('/tmp/test-workspace')];
 
   it('allows paths inside allowedWorkspaces', () => {
     const result = validateWorkspacePath('/tmp/test-workspace/subfolder', allowed);

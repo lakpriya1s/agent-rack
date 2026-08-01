@@ -1,7 +1,7 @@
 {
   "transport": "stdio",
   "allowedWorkspaces": [
-    "/Volumes/External/agent-mcp"
+    "/path/to/your/workspace"
   ],
   "agents": {
     "agy": {

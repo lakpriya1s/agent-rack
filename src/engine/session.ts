@@ -3,7 +3,7 @@ import { AgentConfig, AgentMCPConfig } from '../config/schema.js';
 import { createAdapter, FormattedResult } from '../adapters/index.js';
 import { AgentProcessController, ProcessRunOptions } from './process.js';
 import { validateWorkspacePath } from '../security/workspace.js';
-import { extractAndValidateReview, ReviewOutput } from './review.js';
+import { reviewFromResult, ReviewOutput } from './review.js';
 
 export type SessionStatus = 'running' | 'idle' | 'completed' | 'failed' | 'cancelled';
 
@@ -76,7 +76,7 @@ export class SessionManager {
     }
   ): AgentSession {
     const activeCount = Array.from(this.sessions.values()).filter((s) => s.status === 'running').length;
-    const maxAllowed = this.config.security?.maxConcurrentSessions || 5;
+    const maxAllowed = this.config.security.maxConcurrentSessions;
 
     if (activeCount >= maxAllowed) {
       throw new Error(`Maximum concurrent sessions limit (${maxAllowed}) reached.`);
@@ -98,8 +98,8 @@ export class SessionManager {
       prompt,
       workspace: targetWorkspace,
       mode,
-      timeoutSeconds: options?.timeoutSeconds ?? this.config.security?.defaultTimeoutSeconds ?? 600,
-      sanitizeEnv: this.config.security?.sanitizeEnv !== false,
+      timeoutSeconds: options?.timeoutSeconds ?? this.config.security.defaultTimeoutSeconds,
+      sanitizeEnv: this.config.security.sanitizeEnv,
     };
 
     session.controller
@@ -108,10 +108,7 @@ export class SessionManager {
         session.result = result;
         session.status = 'completed';
         if (session.kind === 'review') {
-          // Parse rawText, not summary: adapters append a "### Tool Calls Executed" block
-          // to summary, which corrupts JSON extraction (the review prompt guarantees the
-          // agent runs git commands, so there are always tool calls).
-          session.reviewResult = extractAndValidateReview(result.rawText || result.summary);
+          session.reviewResult = reviewFromResult(result);
         }
       })
       .catch((err) => {
@@ -151,9 +148,5 @@ export class SessionManager {
     }
 
     session.controller.sendInput(message);
-  }
-
-  listSessions(): AgentSessionInfo[] {
-    return Array.from(this.sessions.values()).map((s) => s.getInfo());
   }
 }

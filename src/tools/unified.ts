@@ -1,9 +1,10 @@
-import { execa } from 'execa';
 import { AgentMCPConfig } from '../config/schema.js';
 import { SessionManager } from '../engine/session.js';
 import { validateWorkspacePath } from '../security/workspace.js';
 import { createAdapter } from '../adapters/index.js';
 import { AgentProcessController } from '../engine/process.js';
+import { listAgentAvailability } from '../engine/availability.js';
+import { requireAgentConfig, resolveTimeoutSeconds, resolveWorkspace } from './args.js';
 
 export interface MCPToolDefinition {
   name: string;
@@ -27,25 +28,7 @@ export function registerUnifiedTools(
       properties: {},
     },
     handler: async () => {
-      const results = [];
-      for (const [agentId, agentConfig] of Object.entries(config.agents)) {
-        let isBinaryAvailable = false;
-        try {
-          await execa('which', [agentConfig.command]);
-          isBinaryAvailable = true;
-        } catch {
-          isBinaryAvailable = false;
-        }
-
-        results.push({
-          agentId,
-          name: agentConfig.name,
-          command: agentConfig.command,
-          transport: agentConfig.transport,
-          description: agentConfig.description || '',
-          status: isBinaryAvailable ? 'available' : 'missing_binary',
-        });
-      }
+      const results = await listAgentAvailability(config);
 
       return {
         content: [
@@ -91,14 +74,11 @@ export function registerUnifiedTools(
     handler: async (args) => {
       const agentId = String(args.agent);
       const prompt = String(args.prompt);
-      const workspace = args.workspace ? String(args.workspace) : config.allowedWorkspaces[0];
-      const timeoutSeconds = typeof args.timeoutSeconds === 'number' ? args.timeoutSeconds : config.security?.defaultTimeoutSeconds || 600;
+      const workspace = resolveWorkspace(args, config);
+      const timeoutSeconds = resolveTimeoutSeconds(args, config);
       const mode = args.mode ? String(args.mode) : undefined;
 
-      const agentConfig = config.agents[agentId];
-      if (!agentConfig) {
-        throw new Error(`Agent '${agentId}' is not configured in agent-mcp.`);
-      }
+      const agentConfig = requireAgentConfig(config, agentId);
 
       validateWorkspacePath(workspace, config.allowedWorkspaces);
 
@@ -110,7 +90,7 @@ export function registerUnifiedTools(
         workspace,
         mode,
         timeoutSeconds,
-        sanitizeEnv: config.security?.sanitizeEnv !== false,
+        sanitizeEnv: config.security.sanitizeEnv,
       });
 
       return {

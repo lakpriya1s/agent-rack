@@ -4,11 +4,12 @@ import { validateWorkspacePath } from '../security/workspace.js';
 import { createAdapter } from '../adapters/index.js';
 import { AgentProcessController } from '../engine/process.js';
 import { MCPToolDefinition } from './unified.js';
+import { requireAgentConfig, resolveTimeoutSeconds, resolveWorkspace } from './args.js';
 import {
   buildReviewPrompt,
-  extractAndValidateReview,
   getReadOnlyMode,
   hasChangesToReview,
+  reviewFromResult,
   ReviewOutput,
   stripEscapeHatchArgs,
 } from '../engine/review.js';
@@ -64,7 +65,7 @@ export function registerReviewTools(
     },
     handler: async (args) => {
       const agentId = String(args.agent);
-      const workspace = args.workspace ? String(args.workspace) : config.allowedWorkspaces[0];
+      const workspace = resolveWorkspace(args, config);
       if (args.scope !== undefined && args.scope !== 'working-tree' && args.scope !== 'branch') {
         throw new Error("scope must be 'working-tree' or 'branch'.");
       }
@@ -73,17 +74,13 @@ export function registerReviewTools(
       const adversarial = args.adversarial === true;
       const focus = args.focus ? String(args.focus) : undefined;
       const background = args.background === true;
-      const timeoutSeconds =
-        typeof args.timeoutSeconds === 'number' ? args.timeoutSeconds : config.security?.defaultTimeoutSeconds || 600;
+      const timeoutSeconds = resolveTimeoutSeconds(args, config);
 
       if (scope === 'branch' && !baseRef) {
         throw new Error("baseRef is required when scope is 'branch'.");
       }
 
-      const agentConfig = config.agents[agentId];
-      if (!agentConfig) {
-        throw new Error(`Agent '${agentId}' is not configured in agent-mcp.`);
-      }
+      const agentConfig = requireAgentConfig(config, agentId);
 
       validateWorkspacePath(workspace, config.allowedWorkspaces);
 
@@ -135,14 +132,11 @@ export function registerReviewTools(
         workspace,
         mode: readOnlyMode,
         timeoutSeconds,
-        sanitizeEnv: config.security?.sanitizeEnv !== false,
+        sanitizeEnv: config.security.sanitizeEnv,
       });
 
-      // Parse rawText, not summary: adapters append a "### Tool Calls Executed" block to
-      // summary, which corrupts JSON extraction (the review prompt guarantees tool calls).
-      const review = extractAndValidateReview(result.rawText || result.summary);
       return {
-        content: [{ type: 'text', text: JSON.stringify(review, null, 2) }],
+        content: [{ type: 'text', text: JSON.stringify(reviewFromResult(result), null, 2) }],
       };
     },
   });

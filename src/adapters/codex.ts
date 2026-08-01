@@ -1,4 +1,4 @@
-import { AgentAdapter, ParsedAgentEvent, FormattedResult } from './base.js';
+import { AgentAdapter, ParsedAgentEvent, FormattedResult, appendToolCallsBlock } from './base.js';
 
 export class CodexExecJsonAdapter implements AgentAdapter {
   readonly transportType = 'codex_exec_json';
@@ -135,15 +135,8 @@ export class CodexExecJsonAdapter implements AgentAdapter {
       summary = `Execution completed with exit code ${exitCode}. Executed ${toolCalls.length} tool calls.`;
     }
 
-    if (toolCalls.length > 0) {
-      summary += `\n\n### Tool Calls Executed (${toolCalls.length}):\n`;
-      for (const tc of toolCalls) {
-        summary += `- \`${tc.name}\`: ${JSON.stringify(tc.input)}\n`;
-      }
-    }
-
     return {
-      summary,
+      summary: appendToolCallsBlock(summary, toolCalls),
       rawText,
       toolCalls,
       events,

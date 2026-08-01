@@ -33,8 +33,4 @@ export class EventRingBuffer {
   size(): number {
     return this.events.length;
   }
-
-  clear(): void {
-    this.events = [];
-  }
 }
