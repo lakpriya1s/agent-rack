@@ -31,7 +31,17 @@ It also ships a structured, adversarial-capable **code review** tool
 
 ## Install
 
-No cloning, no config file to write by hand — just register it with your MCP client:
+**Using Claude Code?** Skip the steps below entirely and install the
+[Claude Code plugin](plugins/agent-rack/README.md) instead — it registers the MCP server
+automatically and adds slash commands (`/agent-rack:run`, `/agent-rack:review`, …) for every tool:
+
+```
+/plugin marketplace add lakpriya1s/agent-rack
+/plugin install agent-rack@agent-rack
+/reload-plugins
+```
+
+For every other MCP client, no cloning, no config file to write by hand — just register it:
 
 ```sh
 npx agent-rack install --target claude     # Claude Code CLI
