@@ -1,11 +1,12 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import { AgentSession } from '../../engine/session.js';
+import { AgentSessionInfo } from '../../engine/session.js';
 import { ParsedAgentEvent } from '../../adapters/base.js';
 
 interface SessionsViewProps {
-  sessions: AgentSession[];
+  sessions: AgentSessionInfo[];
   selectedIndex: number;
+  events: ParsedAgentEvent[];
 }
 
 function getStatusBadge(status: string) {
@@ -25,7 +26,7 @@ function getStatusBadge(status: string) {
   }
 }
 
-export const SessionsView: React.FC<SessionsViewProps> = ({ sessions, selectedIndex }) => {
+export const SessionsView: React.FC<SessionsViewProps> = ({ sessions, selectedIndex, events }) => {
   if (sessions.length === 0) {
     return (
       <Box flexDirection="column" borderStyle="single" borderColor="gray" padding={2} alignItems="center" justifyContent="center">
@@ -35,23 +36,19 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ sessions, selectedIn
     );
   }
 
-  const selectedSession = sessions[selectedIndex] || sessions[0];
-  const info = selectedSession.getInfo();
-  const events: ParsedAgentEvent[] = selectedSession.controller.getBuffer().getAll();
+  const info = sessions[selectedIndex] || sessions[0];
   const recentEvents = events.slice(-12);
 
   return (
     <Box flexDirection="row" gap={1} flexGrow={1}>
-      {/* Left List Pane */}
       <Box flexDirection="column" width="35%" borderStyle="single" borderColor="blue" paddingX={1}>
         <Text bold color="cyan" underline>
           Sessions ({sessions.length})
         </Text>
-        {sessions.map((s, idx) => {
+        {sessions.map((sInfo, idx) => {
           const isSelected = idx === selectedIndex;
-          const sInfo = s.getInfo();
           return (
-            <Box key={s.id} flexDirection="column" marginY={0}>
+            <Box key={sInfo.sessionId} flexDirection="column" marginY={0}>
               <Text bold color={isSelected ? 'inverse' : undefined}>
                 {isSelected ? '► ' : '  '}
                 {sInfo.agentId} <Text color="gray">({sInfo.sessionId.slice(0, 8)})</Text>
@@ -67,14 +64,13 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ sessions, selectedIn
         })}
       </Box>
 
-      {/* Right Details & Live Log Stream Pane */}
       <Box flexDirection="column" width="65%" borderStyle="single" borderColor="cyan" paddingX={1} gap={1}>
         <Box flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
           <Text bold color="green">
             Session Details: <Text color="white">{info.sessionId}</Text>
           </Text>
           <Text>
-            Agent: <Text bold color="yellow">{info.agentName}</Text> ({info.agentId}) | Kind: <Text color="magenta">{selectedSession.kind}</Text>
+            Agent: <Text bold color="yellow">{info.agentName}</Text> ({info.agentId}) | Kind: <Text color="magenta">{info.kind}</Text>
           </Text>
           <Text color="gray">Workspace: {info.workspace}</Text>
           <Text color="gray">Created: {new Date(info.createdAt).toLocaleTimeString()}</Text>
@@ -88,7 +84,6 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ sessions, selectedIn
           )}
         </Box>
 
-        {/* Event Logs Stream */}
         <Box flexDirection="column" flexGrow={1}>
           <Text bold color="magenta" underline>
             Live Event Stream ({events.length} events)

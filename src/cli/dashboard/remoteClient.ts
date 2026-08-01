@@ -7,6 +7,7 @@ import type { AgentSessionInfo, SessionKind } from '../../engine/session.js';
 export class DashboardRemoteClient {
   private readonly client: Client;
   private connected = false;
+  private transport?: SSEClientTransport;
 
   constructor(private readonly serverUrl: string) {
     this.client = new Client({ name: 'agent-rack-dashboard', version: '1.0.0' }, { capabilities: {} });
@@ -14,18 +15,29 @@ export class DashboardRemoteClient {
 
   async connect(): Promise<void> {
     if (this.connected) return;
+
     const transport = new SSEClientTransport(new URL(this.serverUrl));
-    await this.client.connect(transport);
-    this.connected = true;
+    this.transport = transport;
+    try {
+      await this.client.connect(transport);
+      this.connected = true;
+    } catch (err) {
+      await transport.close();
+      this.transport = undefined;
+      throw err;
+    }
   }
 
   async close(): Promise<void> {
-    if (!this.connected) return;
-
     try {
-      await this.client.close();
+      if (this.connected) {
+        await this.client.close();
+      } else {
+        await this.transport?.close();
+      }
     } finally {
       this.connected = false;
+      this.transport = undefined;
     }
   }
 

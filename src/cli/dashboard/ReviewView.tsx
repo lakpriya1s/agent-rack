@@ -1,13 +1,13 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import { AgentSession } from '../../engine/session.js';
+import { AgentSessionInfo } from '../../engine/session.js';
 
 interface ReviewViewProps {
-  sessions: AgentSession[];
+  sessions: AgentSessionInfo[];
 }
 
 export const ReviewView: React.FC<ReviewViewProps> = ({ sessions }) => {
-  const reviewSessions = sessions.filter((s) => s.kind === 'review' || s.reviewResult);
+  const reviewSessions = sessions.filter((s) => s.kind === 'review' || s.review);
 
   if (reviewSessions.length === 0) {
     return (
@@ -23,13 +23,13 @@ export const ReviewView: React.FC<ReviewViewProps> = ({ sessions }) => {
   }
 
   const latestReview = reviewSessions[reviewSessions.length - 1];
-  const review = latestReview.reviewResult;
+  const review = latestReview.review;
 
   return (
     <Box flexDirection="column" gap={1} flexGrow={1}>
       <Box borderStyle="single" borderColor="magenta" paddingX={1} justifyContent="space-between">
         <Text bold color="magenta">
-          🔍 CODE REVIEW INSPECTOR (Session: {latestReview.id.slice(0, 8)})
+          🔍 CODE REVIEW INSPECTOR (Session: {latestReview.sessionId.slice(0, 8)})
         </Text>
         <Text bold color={review?.verdict === 'approve' ? 'green' : 'red'}>
           VERDICT: {review?.verdict === 'approve' ? '✓ APPROVED' : '⚠️ NEEDS ATTENTION'}
@@ -43,7 +43,6 @@ export const ReviewView: React.FC<ReviewViewProps> = ({ sessions }) => {
         </Box>
       )}
 
-      {/* Findings Table */}
       <Box flexDirection="column" borderStyle="single" borderColor="cyan" paddingX={1} flexGrow={1}>
         <Text bold color="cyan" underline>
           Findings ({review?.findings?.length || 0})
@@ -85,7 +84,6 @@ export const ReviewView: React.FC<ReviewViewProps> = ({ sessions }) => {
         )}
       </Box>
 
-      {/* Next Steps */}
       {review?.next_steps && review.next_steps.length > 0 && (
         <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
           <Text bold color="yellow">Recommended Next Steps:</Text>

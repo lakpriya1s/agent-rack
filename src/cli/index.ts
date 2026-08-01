@@ -574,9 +574,10 @@ export function runCLI() {
     .alias('ui')
     .description('Launch the interactive CLI dashboard (TUI) for agent-rack')
     .option('-c, --config <path>', 'Path to agent-rack.config.json')
+    .option('--connect <url>', 'URL of a running agent-rack SSE server (default: derived from config)')
     .action(async (options) => {
       const { startDashboard } = await import('./dashboard/index.js');
-      await startDashboard(options.config);
+      await startDashboard(options.config, options.connect);
     });
 
   // Default subcommand: if no subcommand provided, launch server
