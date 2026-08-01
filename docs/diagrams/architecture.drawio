@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="Electron" modified="2026-08-01T13:30:00.000Z" agent="Antigravity AI Agent" etag="agent-mcp-v1" version="21.6.8" type="device">
+  <diagram id="system-architecture" name="Agent-MCP Architecture & System Flow">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title Header -->
+        <mxCell id="title" value="Agent-MCP: Architecture &amp; Execution Model" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=22;fontStyle=1;fontColor=#1E293B;" vertex="1" parent="1">
+          <mxGeometry x="380" y="20" width="410" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Subtitle -->
+        <mxCell id="subtitle" value="Model Context Protocol (MCP) Server for Driving AI CLI Agents (AGY, Claude Code, OpenCode)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#64748B;" vertex="1" parent="1">
+          <mxGeometry x="310" y="60" width="550" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Container: MCP Clients -->
+        <mxCell id="box-clients" value="MCP Client Layer" style="swimlane;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#CBD5E1;fontStyle=1;fontSize=14;fontColor=#334155;startSize=30;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="110" width="240" height="660" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client-antigravity" value="Antigravity IDE&#xa;(Master Agent)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#3B82F6;strokeWidth=2;fontStyle=1;fontSize=12;fontColor=#1E40AF;" vertex="1" parent="box-clients">
+          <mxGeometry x="30" y="60" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client-claude-desktop" value="Claude Desktop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F3FF;strokeColor=#8B5CF6;strokeWidth=2;fontStyle=1;fontSize=12;fontColor=#5B21B6;" vertex="1" parent="box-clients">
+          <mxGeometry x="30" y="150" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client-cursor" value="Cursor / VS Code&#xa;(MCP Extension)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#22C55E;strokeWidth=2;fontStyle=1;fontSize=12;fontColor=#166534;" vertex="1" parent="box-clients">
+          <mxGeometry x="30" y="240" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client-custom" value="Custom Multi-Agent&#xa;Orchestrator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7ED;strokeColor=#F97316;strokeWidth=2;fontStyle=1;fontSize=12;fontColor=#9A3412;" vertex="1" parent="box-clients">
+          <mxGeometry x="30" y="330" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client-note" value="Connects via Standard MCP&#xa;• stdio (JSON-RPC 2.0)&#xa;• HTTP-SSE Transport" style="text;html=1;strokeColor=#E2E8F0;fillColor=#FFFFFF;align=left;verticalAlign=top;whiteSpace=wrap;rounded=1;fontSize=11;fontColor=#475569;spacing=6;" vertex="1" parent="box-clients">
+          <mxGeometry x="30" y="440" width="180" height="180" as="geometry" />
+        </mxCell>
+
+        <!-- Container: Agent-MCP Core Server -->
+        <mxCell id="box-server" value="Agent-MCP Server Host" style="swimlane;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#94A3B8;fontStyle=1;fontSize=14;fontColor=#1E293B;startSize=30;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="340" y="110" width="480" height="660" as="geometry" />
+        </mxCell>
+
+        <!-- Component: Protocol Handler -->
+        <mxCell id="comp-mcp-proto" value="MCP Protocol Handler &amp; Tool Router&#xa;(JSON-RPC 2.0 Schema Validator)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#38BDF8;strokeColor=#0284C7;fontColor=#FFFFFF;fontStyle=1;fontSize=12;" vertex="1" parent="box-server">
+          <mxGeometry x="30" y="50" width="420" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Component: Dynamic Tool Registry -->
+        <mxCell id="comp-registry" value="Dynamic Tool Registry&#xa;[ agent_run | agent_session_* | agy_run | claude_run | opencode_run ]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E0F2FE;strokeColor=#0EA5E9;fontColor=#0369A1;fontStyle=1;fontSize=11;" vertex="1" parent="box-server">
+          <mxGeometry x="30" y="120" width="420" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Component: Security & Workspace Manager -->
+        <mxCell id="comp-security" value="Security &amp; Workspace Guard&#xa;• allowedWorkspaces Enforcement&#xa;• Path Normalization &amp; Traversal Prevention&#xa;• Env Sanitization" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF2F2;strokeColor=#EF4444;fontColor=#991B1B;fontStyle=1;fontSize=11;align=left;spacingLeft=10;" vertex="1" parent="box-server">
+          <mxGeometry x="30" y="180" width="420" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- Component: Session Manager -->
+        <mxCell id="comp-session-mgr" value="Session &amp; Process Manager&#xa;• Process Spawning &amp; Signal Handling (SIGINT/SIGKILL)&#xa;• Background Task Store &amp; Concurrency Control&#xa;• Stdout / Stderr Stream Retention" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#F59E0B;fontColor=#92400E;fontStyle=1;fontSize=11;align=left;spacingLeft=10;" vertex="1" parent="box-server">
+          <mxGeometry x="30" y="260" width="420" height="75" as="geometry" />
+        </mxCell>
+
+        <!-- Container: Transport Adapters -->
+        <mxCell id="box-adapters" value="Agent Transport Adapters" style="swimlane;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontStyle=1;fontSize=12;fontColor=#334155;startSize=25;rounded=1;" vertex="1" parent="box-server">
+          <mxGeometry x="30" y="360" width="420" height="270" as="geometry" />
+        </mxCell>
+
+        <mxCell id="adapter-claude" value="ClaudeStreamJsonAdapter&#xa;• Line-delimited JSON stream&#xa;• Tool call &amp; diff parser&#xa;• Cost token tracker" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E8FF;strokeColor=#A855F7;fontColor=#6B21A8;fontSize=10;fontStyle=1;align=left;spacingLeft=8;" vertex="1" parent="box-adapters">
+          <mxGeometry x="20" y="40" width="180" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="adapter-agy" value="AgyStreamAdapter&#xa;• Headless event stream&#xa;• Step &amp; verification handler&#xa;• Artifact metadata collector" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E0E7FF;strokeColor=#6366F1;fontColor=#3730A3;fontSize=10;fontStyle=1;align=left;spacingLeft=8;" vertex="1" parent="box-adapters">
+          <mxGeometry x="220" y="40" width="180" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="adapter-pty" value="PtyTerminalAdapter&#xa;• node-pty Terminal Emulation&#xa;• Interactive Prompt Handling&#xa;• ANSI escape stripping" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECFDF5;strokeColor=#10B981;fontColor=#065F46;fontSize=10;fontStyle=1;align=left;spacingLeft=8;" vertex="1" parent="box-adapters">
+          <mxGeometry x="20" y="150" width="380" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- Container: Target Agent CLIs -->
+        <mxCell id="box-clis" value="Target Agent CLI Runtimes" style="swimlane;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#CBD5E1;fontStyle=1;fontSize=14;fontColor=#334155;startSize=30;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="880" y="110" width="250" height="660" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cli-agy" value="agy (Antigravity CLI)&#xa;`agy --mode headless`" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF2FF;strokeColor=#4F46E5;strokeWidth=2;fontStyle=1;fontSize=12;fontColor=#312E81;" vertex="1" parent="box-clis">
+          <mxGeometry x="30" y="60" width="190" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cli-claude" value="claude (Claude Code)&#xa;`claude --output-format json`" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAF5FF;strokeColor=#9333EA;strokeWidth=2;fontStyle=1;fontSize=12;fontColor=#581C87;" vertex="1" parent="box-clis">
+          <mxGeometry x="30" y="160" width="190" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cli-opencode" value="opencode / Aider&#xa;`opencode --non-interactive`" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;strokeWidth=2;fontStyle=1;fontSize=12;fontColor=#14532D;" vertex="1" parent="box-clis">
+          <mxGeometry x="30" y="260" width="190" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cli-custom" value="Custom CLI Script / Agent&#xa;`my-agent-cli --json`" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#D97706;strokeWidth=2;fontStyle=1;fontSize=12;fontColor=#78350F;" vertex="1" parent="box-clis">
+          <mxGeometry x="30" y="360" width="190" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cli-workspace-box" value="Sub-Agent Workspace Directory&#xa;(Checked against allowedWorkspaces)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;fontStyle=1;fontSize=10;fontColor=#334155;" vertex="1" parent="box-clis">
+          <mxGeometry x="30" y="470" width="190" height="140" as="geometry" />
+        </mxCell>
+
+        <!-- Connectors -->
+        <!-- Client -> Server -->
+        <mxCell id="conn-client-server" value="MCP Tool Invocation&#xa;(JSON-RPC 2.0)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#0284C7;fontStyle=1;fontSize=11;fontColor=#0369A1;" edge="1" parent="1" source="box-clients" target="comp-mcp-proto">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Internal Server Flow -->
+        <mxCell id="conn-proto-registry" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#64748B;" edge="1" parent="1" source="comp-mcp-proto" target="comp-registry">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn-registry-sec" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#64748B;" edge="1" parent="1" source="comp-registry" target="comp-security">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn-sec-session" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#64748B;" edge="1" parent="1" source="comp-security" target="comp-session-mgr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn-session-adapters" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#64748B;" edge="1" parent="1" source="comp-session-mgr" target="box-adapters">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Adapters -> Child CLI Runtimes -->
+        <mxCell id="conn-adapter-claude" value="stdio JSON stream" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#8B5CF6;fontStyle=1;fontSize=10;fontColor=#6B21A8;" edge="1" parent="1" source="adapter-claude" target="cli-claude">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn-adapter-agy" value="Headless Event Stream" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#4F46E5;fontStyle=1;fontSize=10;fontColor=#3730A3;" edge="1" parent="1" source="adapter-agy" target="cli-agy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn-adapter-pty" value="PTY / Terminal In/Out" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2;strokeColor=#10B981;fontStyle=1;fontSize=10;fontColor=#065F46;" edge="1" parent="1" source="adapter-pty" target="cli-opencode">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

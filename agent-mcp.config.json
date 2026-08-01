@@ -1,0 +1,60 @@
+{
+  "transport": "stdio",
+  "allowedWorkspaces": [
+    "/Volumes/External/agent-mcp"
+  ],
+  "agents": {
+    "agy": {
+      "name": "Antigravity CLI",
+      "command": "agy",
+      "args": [
+        "--print"
+      ],
+      "transport": "agy_stream",
+      "env": {
+        "PAGER": "cat"
+      },
+      "description": "Antigravity CLI autonomous coding agent"
+    },
+    "claude": {
+      "name": "Claude Code CLI",
+      "command": "claude",
+      "args": [
+        "--dangerously-skip-permissions",
+        "--output-format",
+        "json"
+      ],
+      "transport": "claude_stream_json",
+      "env": {},
+      "description": "Claude Code CLI streaming JSON agent"
+    },
+    "opencode": {
+      "name": "OpenCode Interpreter",
+      "command": "opencode",
+      "args": [
+        "run"
+      ],
+      "transport": "pty_interactive",
+      "env": {},
+      "description": "OpenCode interactive terminal CLI agent"
+    },
+    "codex": {
+      "name": "Codex CLI",
+      "command": "codex",
+      "args": [
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--dangerously-bypass-approvals-and-sandbox"
+      ],
+      "transport": "codex_exec_json",
+      "env": {},
+      "description": "OpenAI Codex CLI non-interactive JSON streaming agent"
+    }
+  },
+  "security": {
+    "sanitizeEnv": true,
+    "maxConcurrentSessions": 5,
+    "defaultTimeoutSeconds": 600
+  }
+}

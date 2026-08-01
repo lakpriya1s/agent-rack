@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agent-mcp": {
+      "command": "node",
+      "args": [
+        "/Volumes/External/agent-mcp/bin/agent-mcp.js",
+        "start"
+      ]
+    }
+  }
+}
