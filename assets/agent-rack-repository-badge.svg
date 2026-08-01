@@ -1,20 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="168" viewBox="0 0 760 168" fill="none" role="img" aria-labelledby="title desc">
-  <title id="title">Agent Rack reversed horizontal wordmark</title>
-  <desc id="desc">Horizontal logo for dark backgrounds.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="320" viewBox="0 0 960 320" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Rack repository badge</title>
+  <desc id="desc">Wide repository and social preview badge.</desc>
 
-  <rect width="760" height="168" rx="28" fill="#111827"/>
-
-  <defs>
-    <linearGradient id="hubGradient" x1="208" y1="278" x2="304" y2="374" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7C3AED"/>
-      <stop offset="1" stop-color="#06B6D4"/>
-    </linearGradient>
-    <filter id="softShadow" x="-40%" y="-40%" width="180%" height="180%">
-      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#0F172A" flood-opacity=".18"/>
-    </filter>
-  </defs>
-
-  <g transform="translate(32 20) scale(.27)">
+  <rect width="960" height="320" rx="64" fill="#F8FAFC"/>
+  <rect x="28" y="28" width="264" height="264" rx="58" fill="#111827"/>
+  <g transform="translate(36 36) scale(.48)">
 
   <defs>
     <linearGradient id="hubGradient" x1="208" y1="278" x2="304" y2="374" gradientUnits="userSpaceOnUse">
@@ -45,11 +35,9 @@
   <path d="M256 374V406" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round"/>
   <path d="M232 406H280" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round"/>
   </g>
-  <text x="192" y="102" fill="#FFFFFF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial, sans-serif"
-        font-size="64" font-weight="800" letter-spacing="-2.5">agent-</text>
-  <text x="397" y="102" fill="#A78BFA" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial, sans-serif"
-        font-size="64" font-weight="800" letter-spacing="-2.5">rack</text>
-  <text x="194" y="136" fill="#CBD5E1" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial, sans-serif"
-        font-size="18" font-weight="650" letter-spacing="2.4">ONE MCP BRIDGE. MANY CODING AGENTS.</text>
+  <text x="340" y="154" fill="#111827" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial, sans-serif"
+        font-size="88" font-weight="850" letter-spacing="-4">agent-rack</text>
+  <text x="344" y="212" fill="#64748B" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial, sans-serif"
+        font-size="24" font-weight="600">Bridge any CLI coding agent into any MCP client</text>
 
 </svg>

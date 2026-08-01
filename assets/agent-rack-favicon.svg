@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Rack favicon</title>
+  <desc id="desc">Simplified Agent Rack icon for small sizes.</desc>
+
+  <rect width="64" height="64" rx="15" fill="#111827"/>
+  <path d="M13 14V42C13 48 17 52 23 52H41C47 52 51 48 51 42V14" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="20" cy="19" r="4" fill="#7C3AED"/>
+  <circle cx="28" cy="19" r="4" fill="#06B6D4"/>
+  <circle cx="36" cy="19" r="4" fill="#84CC16"/>
+  <circle cx="44" cy="19" r="4" fill="#F59E0B"/>
+  <path d="M20 26C20 34 27 33 30 39M28 26C28 34 31 35 32 39M36 26C36 34 33 35 32 39M44 26C44 34 37 33 34 39"
+        stroke="#FFFFFF" stroke-width="3.2" stroke-linecap="round"/>
+  <rect x="27" y="36" width="10" height="10" rx="3" transform="rotate(45 27 36)" fill="#7C3AED"/>
+
+</svg>
