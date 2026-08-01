@@ -2,7 +2,7 @@
 name: session-start
 description: Start a background sub-agent session via agent-rack for a long-running task
 argument-hint: '<agent> <prompt> [--workspace <path>] [--mode <mode>]'
-allowed-tools: mcp__agent-rack__agent_session_create, mcp__agent-rack__agent_list_available
+allowed-tools: mcp__plugin_agent-rack_agent-rack__agent_session_create, mcp__plugin_agent-rack_agent-rack__agent_list_available
 disable-model-invocation: true
 ---
 
@@ -16,7 +16,7 @@ Raw slash-command arguments:
 Same shape as `/agent-rack:run`: first word is the agent id, the rest (minus flags) is the
 prompt. Recognized flags: `--workspace <path>`, `--mode <mode>`.
 
-If no agent id is given, call `mcp__agent-rack__agent_list_available` and ask rather than
+If no agent id is given, call `mcp__plugin_agent-rack_agent-rack__agent_list_available` and ask rather than
 guessing.
 
 ## When to prefer this over `/agent-rack:run`
@@ -27,7 +27,7 @@ input mid-task.
 
 ## Execution
 
-Call `mcp__agent-rack__agent_session_create` with `agent` and `prompt`, plus `workspace`/`mode`
+Call `mcp__plugin_agent-rack_agent-rack__agent_session_create` with `agent` and `prompt`, plus `workspace`/`mode`
 if given. It returns immediately with a `sessionId` and `status: "running"` — it does not block.
 
 ## Output

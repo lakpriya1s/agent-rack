@@ -1,7 +1,7 @@
 ---
 name: setup
 description: Verify the agent-rack MCP server is connected and configured agents are usable
-allowed-tools: mcp__agent-rack__agent_list_available, Bash(claude mcp:*), Bash(npx agent-rack:*)
+allowed-tools: mcp__plugin_agent-rack_agent-rack__agent_list_available, Bash(claude mcp:*), Bash(npx agent-rack:*)
 disable-model-invocation: true
 ---
 
@@ -9,7 +9,7 @@ Verify agent-rack is actually connected and usable from this Claude Code session
 
 ## Execution
 
-1. Try calling `mcp__agent-rack__agent_list_available`.
+1. Try calling `mcp__plugin_agent-rack_agent-rack__agent_list_available`.
    - If it succeeds: agent-rack's MCP server is connected. Report the returned agent list
      (same presentation as `/agent-rack:agents`) and stop — no further checks needed.
    - If the tool isn't available at all (not listed among your tools): the plugin's `.mcp.json`

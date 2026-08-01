@@ -2,7 +2,7 @@
 name: session-send
 description: Send follow-up input to a running background agent-rack session
 argument-hint: '<sessionId> <message>'
-allowed-tools: mcp__agent-rack__agent_session_send
+allowed-tools: mcp__plugin_agent-rack_agent-rack__agent_session_send
 disable-model-invocation: true
 ---
 
@@ -18,7 +18,7 @@ not rephrase or add to it.
 
 ## Execution
 
-Call `mcp__agent-rack__agent_session_send` with `sessionId` and `message`. This only works while
+Call `mcp__plugin_agent-rack_agent-rack__agent_session_send` with `sessionId` and `message`. This only works while
 the session's status is `running`; if it errors because the session isn't running, tell the
 user to check `/agent-rack:session-status <sessionId>` instead.
 

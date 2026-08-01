@@ -16,8 +16,8 @@ single-file fixes, small investigations. This is the simplest path — prefer it
 specific reason to go async.
 
 If the agent id is already known and fixed for the task (e.g. the user explicitly said "use
-codex"), prefer the shortcut tool (`mcp__agent-rack__codex_run`, `mcp__agent-rack__claude_run`,
-`mcp__agent-rack__opencode_run`, `mcp__agent-rack__agy_run`) over `agent_run` with an `agent`
+codex"), prefer the shortcut tool (`mcp__plugin_agent-rack_agent-rack__codex_run`, `mcp__plugin_agent-rack_agent-rack__claude_run`,
+`mcp__plugin_agent-rack_agent-rack__opencode_run`, `mcp__plugin_agent-rack_agent-rack__agy_run`) over `agent_run` with an `agent`
 parameter — it's the same call with less to get wrong.
 
 ## Background (`agent_session_create` + `agent_session_status`/`_logs`/`_send`/`_cancel`)

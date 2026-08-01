@@ -2,7 +2,7 @@
 name: review
 description: Run a structured, read-only code review through agent-rack's agent_review tool
 argument-hint: '<agent> [--base <ref>] [--adversarial] [--focus <text>] [--background] [--timeout <seconds>]'
-allowed-tools: mcp__agent-rack__agent_review, mcp__agent-rack__agent_session_status, mcp__agent-rack__agent_list_available
+allowed-tools: mcp__plugin_agent-rack_agent-rack__agent_review, mcp__plugin_agent-rack_agent-rack__agent_session_status, mcp__plugin_agent-rack_agent-rack__agent_list_available
 disable-model-invocation: true
 ---
 
@@ -19,7 +19,7 @@ on the findings. Your only job is to run the review and present the results.
 ## Parsing
 
 The first word is the agent id (e.g. `claude`, `codex`, `opencode`, `agy`). If omitted, call
-`mcp__agent-rack__agent_list_available` and ask the user which one to use.
+`mcp__plugin_agent-rack_agent-rack__agent_list_available` and ask the user which one to use.
 
 Recognized flags:
 - `--base <ref>` → sets `scope: "branch"` and `baseRef: <ref>` (reviews the branch diff against
@@ -33,7 +33,7 @@ With no flags, this reviews the current working-tree changes in the foreground.
 
 ## Execution
 
-Call `mcp__agent-rack__agent_review` with `agent` and the parsed parameters.
+Call `mcp__plugin_agent-rack_agent-rack__agent_review` with `agent` and the parsed parameters.
 
 ### Background handling
 

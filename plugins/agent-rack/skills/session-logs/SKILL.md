@@ -2,7 +2,7 @@
 name: session-logs
 description: Read the raw stdout/stderr event stream from a background agent-rack session
 argument-hint: '<sessionId> [--offset <n>] [--limit <n>]'
-allowed-tools: mcp__agent-rack__agent_session_logs
+allowed-tools: mcp__plugin_agent-rack_agent-rack__agent_session_logs
 disable-model-invocation: true
 ---
 
@@ -18,7 +18,7 @@ start, default `0`), `--limit <n>` (max events to return, default all remaining)
 
 ## Execution
 
-Call `mcp__agent-rack__agent_session_logs` with `sessionId` and any given `offset`/`limit`.
+Call `mcp__plugin_agent-rack_agent-rack__agent_session_logs` with `sessionId` and any given `offset`/`limit`.
 
 ## Output
 

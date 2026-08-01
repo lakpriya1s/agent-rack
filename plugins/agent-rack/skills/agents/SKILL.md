@@ -1,16 +1,16 @@
 ---
 name: agents
 description: List agent-rack's configured CLI agents and whether each binary is available
-allowed-tools: mcp__agent-rack__agent_list_available
+allowed-tools: mcp__plugin_agent-rack_agent-rack__agent_list_available
 disable-model-invocation: true
 ---
 
 List every agent configured in agent-rack and probe `$PATH` for its binary, via the
-`mcp__agent-rack__agent_list_available` MCP tool.
+`mcp__plugin_agent-rack_agent-rack__agent_list_available` MCP tool.
 
 ## Execution
 
-Call `mcp__agent-rack__agent_list_available` with no arguments.
+Call `mcp__plugin_agent-rack_agent-rack__agent_list_available` with no arguments.
 
 ## Output
 

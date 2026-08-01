@@ -2,7 +2,7 @@
 name: session-cancel
 description: Cancel a running background agent-rack session
 argument-hint: '<sessionId>'
-allowed-tools: mcp__agent-rack__agent_session_cancel
+allowed-tools: mcp__plugin_agent-rack_agent-rack__agent_session_cancel
 disable-model-invocation: true
 ---
 
@@ -13,7 +13,7 @@ Raw slash-command arguments:
 
 ## Execution
 
-Call `mcp__agent-rack__agent_session_cancel` with the given `sessionId`. This sends `SIGINT` to
+Call `mcp__plugin_agent-rack_agent-rack__agent_session_cancel` with the given `sessionId`. This sends `SIGINT` to
 the underlying process, then `SIGKILL` after a 3-second grace period if it hasn't exited.
 
 ## Output

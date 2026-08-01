@@ -2,7 +2,7 @@
 name: run
 description: Run a one-shot task synchronously with a named CLI sub-agent via agent-rack
 argument-hint: '<agent> <prompt> [--workspace <path>] [--mode <mode>] [--timeout <seconds>]'
-allowed-tools: mcp__agent-rack__agent_run, mcp__agent-rack__agent_list_available
+allowed-tools: mcp__plugin_agent-rack_agent-rack__agent_run, mcp__plugin_agent-rack_agent-rack__agent_list_available
 disable-model-invocation: true
 ---
 
@@ -22,11 +22,11 @@ prompt. Recognized flags:
 - `--timeout <seconds>` → `timeoutSeconds` parameter
 
 If no agent id is given, or you're unsure which ids are configured, call
-`mcp__agent-rack__agent_list_available` first and ask the user to pick one rather than guessing.
+`mcp__plugin_agent-rack_agent-rack__agent_list_available` first and ask the user to pick one rather than guessing.
 
 ## Execution
 
-Call `mcp__agent-rack__agent_run` with `agent` and `prompt` (both required), plus any of
+Call `mcp__plugin_agent-rack_agent-rack__agent_run` with `agent` and `prompt` (both required), plus any of
 `workspace`, `mode`, `timeoutSeconds` the user supplied. Do not add extra instructions to the
 prompt text beyond what the user wrote.
 

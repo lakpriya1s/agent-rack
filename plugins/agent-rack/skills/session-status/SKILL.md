@@ -2,7 +2,7 @@
 name: session-status
 description: Check the status and summary of a background agent-rack session
 argument-hint: '<sessionId>'
-allowed-tools: mcp__agent-rack__agent_session_status
+allowed-tools: mcp__plugin_agent-rack_agent-rack__agent_session_status
 disable-model-invocation: true
 ---
 
@@ -14,7 +14,7 @@ Raw slash-command arguments:
 ## Execution
 
 The argument is a `sessionId` (from `/agent-rack:session-start` or a background
-`/agent-rack:review`). Call `mcp__agent-rack__agent_session_status` with it.
+`/agent-rack:review`). Call `mcp__plugin_agent-rack_agent-rack__agent_session_status` with it.
 
 ## Output
 
