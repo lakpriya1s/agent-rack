@@ -3,6 +3,10 @@ import { getDefaultConfig } from '../../config/loader.js';
 import { resolveDashboardServerUrl } from './connection.js';
 
 describe('resolveDashboardServerUrl', () => {
+  it('uses 8987 as the generated config and shared-server default', () => {
+    expect(getDefaultConfig().port).toBe(8987);
+  });
+
   it('uses the explicit --connect flag when given, regardless of config', () => {
     const config = getDefaultConfig();
     const result = resolveDashboardServerUrl(config, 'http://example.com:9999/sse');

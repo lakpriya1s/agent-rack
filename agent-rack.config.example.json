@@ -1,5 +1,6 @@
 {
   "transport": "stdio",
+  "port": 8987,
   "allowedWorkspaces": [
     "/path/to/your/workspace"
   ],

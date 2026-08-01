@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { AgentMCPConfig } from '../../config/schema.js';
 import { AgentSessionInfo } from '../../engine/session.js';
@@ -22,18 +22,61 @@ interface AppProps {
 const SESSION_LIST_POLL_MS = 1500;
 const SESSION_LOGS_POLL_MS = 750;
 
+export interface DashboardSessionListState {
+  sessions: AgentSessionInfo[];
+  selectedSessionId?: string;
+}
+
+export function refreshSessionList(
+  state: DashboardSessionListState,
+  sessions: AgentSessionInfo[]
+): DashboardSessionListState {
+  const selectedSessionId = sessions.some(
+    (session) => session.sessionId === state.selectedSessionId
+  )
+    ? state.selectedSessionId
+    : sessions[0]?.sessionId;
+  return { sessions, selectedSessionId };
+}
+
+export function prependLaunchedSession(
+  state: DashboardSessionListState,
+  session: AgentSessionInfo
+): DashboardSessionListState {
+  return {
+    sessions: [session, ...state.sessions.filter((item) => item.sessionId !== session.sessionId)],
+    selectedSessionId: session.sessionId,
+  };
+}
+
+export function moveSessionSelection(
+  state: DashboardSessionListState,
+  direction: -1 | 1
+): DashboardSessionListState {
+  if (state.sessions.length === 0) return { sessions: [], selectedSessionId: undefined };
+
+  const currentIndex = state.sessions.findIndex(
+    (session) => session.sessionId === state.selectedSessionId
+  );
+  const nextIndex =
+    currentIndex < 0
+      ? 0
+      : (currentIndex + direction + state.sessions.length) % state.sessions.length;
+  return { ...state, selectedSessionId: state.sessions[nextIndex].sessionId };
+}
+
 export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, remoteClient }) => {
   const { exit } = useApp();
-  const [sessions, setSessions] = useState<AgentSessionInfo[]>([]);
+  const [sessionListState, setSessionListState] = useState<DashboardSessionListState>({
+    sessions: [],
+    selectedSessionId: undefined,
+  });
+  const { sessions, selectedSessionId } = sessionListState;
   const [events, setEvents] = useState<ParsedAgentEvent[]>([]);
-  const [selectedIndex, setSelectedIndex] = useState(0);
   const [activeTab, setActiveTab] = useState<'sessions' | 'launcher' | 'system' | 'reviews'>('sessions');
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined);
   const [showSendInputModal, setShowSendInputModal] = useState(false);
   const [connectionLost, setConnectionLost] = useState(false);
-  const eventsOffsetRef = useRef(0);
-  const selectedSessionIdRef = useRef<string | undefined>(undefined);
-  const logsPollInFlightRef = useRef(false);
 
   const availableAgents = Object.keys(config.agents);
 
@@ -43,8 +86,7 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
       try {
         const list = await remoteClient.listSessions();
         if (!cancelled) {
-          setSessions(list);
-          setSelectedIndex((prev) => Math.min(prev, Math.max(0, list.length - 1)));
+          setSessionListState((state) => refreshSessionList(state, list));
           setConnectionLost(false);
         }
       } catch {
@@ -60,32 +102,26 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
   }, [remoteClient]);
 
   useEffect(() => {
-    const selected = sessions[selectedIndex];
-    if (!selected) {
+    if (!selectedSessionId) {
       setEvents([]);
       return;
     }
-    if (selectedSessionIdRef.current !== selected.sessionId) {
-      selectedSessionIdRef.current = selected.sessionId;
-      eventsOffsetRef.current = 0;
-      setEvents([]);
-    }
 
     let cancelled = false;
-    const poll = async () => {
-      if (logsPollInFlightRef.current) return;
+    let inFlight = false;
+    setEvents([]);
 
-      logsPollInFlightRef.current = true;
+    const poll = async () => {
+      if (cancelled || inFlight) return;
+
+      inFlight = true;
       try {
-        const newEvents = await remoteClient.getSessionLogs(selected.sessionId, eventsOffsetRef.current);
-        if (!cancelled && newEvents.length > 0) {
-          eventsOffsetRef.current += newEvents.length;
-          setEvents((prev) => [...prev, ...newEvents]);
-        }
+        const snapshot = await remoteClient.getSessionLogs(selectedSessionId);
+        if (!cancelled) setEvents(snapshot);
       } catch {
         // Connection issues are already surfaced by the session-list poll above.
       } finally {
-        logsPollInFlightRef.current = false;
+        inFlight = false;
       }
     };
     poll();
@@ -94,7 +130,16 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
       cancelled = true;
       clearInterval(interval);
     };
-  }, [remoteClient, sessions, selectedIndex]);
+  }, [remoteClient, selectedSessionId]);
+
+  const selectedSession =
+    sessions.find((session) => session.sessionId === selectedSessionId) ?? sessions[0];
+  const selectedIndex = selectedSession
+    ? Math.max(
+        0,
+        sessions.findIndex((session) => session.sessionId === selectedSession.sessionId)
+      )
+    : 0;
 
   const activeSessionsCount = sessions.filter((s) => s.status === 'running').length;
 
@@ -117,15 +162,14 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
     } else if (input === '4') {
       setActiveTab('reviews');
     } else if (key.upArrow) {
-      setSelectedIndex((prev) => (prev > 0 ? prev - 1 : Math.max(0, sessions.length - 1)));
+      setSessionListState((state) => moveSessionSelection(state, -1));
     } else if (key.downArrow) {
-      setSelectedIndex((prev) => (prev < sessions.length - 1 ? prev + 1 : 0));
+      setSessionListState((state) => moveSessionSelection(state, 1));
     } else if (input === 'c') {
-      const selected = sessions[selectedIndex];
-      if (selected && selected.status === 'running') {
+      if (selectedSession && selectedSession.status === 'running') {
         remoteClient
-          .cancelSession(selected.sessionId)
-          .then(() => setStatusMessage(`Session ${selected.sessionId.slice(0, 8)} cancelled.`))
+          .cancelSession(selectedSession.sessionId)
+          .then(() => setStatusMessage(`Session ${selectedSession.sessionId.slice(0, 8)} cancelled.`))
           .catch((err) =>
             setStatusMessage(`Error cancelling session: ${err instanceof Error ? err.message : String(err)}`)
           );
@@ -133,8 +177,7 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
         setStatusMessage('No active running session selected to cancel.');
       }
     } else if (input === 's') {
-      const selected = sessions[selectedIndex];
-      if (selected && selected.status === 'running') {
+      if (selectedSession && selectedSession.status === 'running') {
         setShowSendInputModal(true);
       } else {
         setStatusMessage('Select a running session to send input.');
@@ -151,8 +194,7 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
   ) => {
     try {
       const session = await remoteClient.createSession(agentId, prompt, workspace, kind, model);
-      setSessions((prev) => [session, ...prev]);
-      setSelectedIndex(0);
+      setSessionListState((state) => prependLaunchedSession(state, session));
       setActiveTab('sessions');
       setStatusMessage(`Launched ${agentId} (${kind}) session ${session.sessionId.slice(0, 8)}`);
     } catch (err) {
@@ -161,11 +203,12 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
   };
 
   const handleSendInput = async (message: string) => {
-    const selected = sessions[selectedIndex];
-    if (selected) {
+    if (selectedSession) {
       try {
-        await remoteClient.sendInput(selected.sessionId, message);
-        setStatusMessage(`Sent input to ${selected.agentId} (${selected.sessionId.slice(0, 8)})`);
+        await remoteClient.sendInput(selectedSession.sessionId, message);
+        setStatusMessage(
+          `Sent input to ${selectedSession.agentId} (${selectedSession.sessionId.slice(0, 8)})`
+        );
       } catch (err) {
         setStatusMessage(`Error sending input: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -199,10 +242,10 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
           onLaunch={handleLaunch}
           onCancel={() => setActiveTab('sessions')}
         />
-      ) : showSendInputModal && sessions[selectedIndex] ? (
+      ) : showSendInputModal && selectedSession ? (
         <SendInputModal
-          sessionId={sessions[selectedIndex].sessionId}
-          agentName={sessions[selectedIndex].agentName}
+          sessionId={selectedSession.sessionId}
+          agentName={selectedSession.agentName}
           onSend={handleSendInput}
           onCancel={() => setShowSendInputModal(false)}
         />

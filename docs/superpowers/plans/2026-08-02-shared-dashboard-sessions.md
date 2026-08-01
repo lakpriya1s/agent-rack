@@ -474,7 +474,7 @@ export async function startAgentMCPServer(
 ): Promise<http.Server | undefined> {
   const ctx = await createServerContext(options.configPath);
   const targetTransport = options.transport || ctx.config.transport || 'stdio';
-  const targetPort = options.port ?? ctx.config.port ?? 8765;
+  const targetPort = options.port ?? ctx.config.port ?? 8987;
 
   // No config file anywhere on the search path means `allowedWorkspaces` silently defaults
   // to the current directory. That is the whole security boundary, so say so out loud.
@@ -515,7 +515,7 @@ export async function startAgentMCPServer(
 
     const httpServer = http.createServer(app);
     return new Promise((resolve) => {
-      httpServer.listen(targetPort, () => {
+      httpServer.listen(targetPort, '127.0.0.1', () => {
         const boundPort = (httpServer.address() as { port: number }).port;
         console.error(`Agent-MCP Server running on HTTP-SSE: http://localhost:${boundPort}/sse`);
         resolve(httpServer);
@@ -531,7 +531,7 @@ export async function startAgentMCPServer(
 }
 ```
 
-Note: `targetPort` now uses `??` instead of `||` so `port: 0` (used by the test to get an OS-assigned ephemeral port) isn't treated as falsy and overridden by the `8765` default.
+Note: `targetPort` now uses `??` instead of `||` so `port: 0` (used by the test to get an OS-assigned ephemeral port) isn't treated as falsy and overridden by the `8987` default.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -766,12 +766,12 @@ describe('resolveDashboardServerUrl', () => {
     expect(result).toEqual({ url: 'http://localhost:8987/sse' });
   });
 
-  it('defaults to port 8765 when transport is sse but no port is set', () => {
+  it('defaults to port 8987 when transport is sse but no port is set', () => {
     const config = getDefaultConfig();
     config.transport = 'sse';
     config.port = undefined;
     const result = resolveDashboardServerUrl(config, undefined);
-    expect(result).toEqual({ url: 'http://localhost:8765/sse' });
+    expect(result).toEqual({ url: 'http://localhost:8987/sse' });
   });
 
   it('returns an error when transport is stdio and no --connect flag is given', () => {
@@ -827,7 +827,7 @@ export function resolveDashboardServerUrl(
     };
   }
 
-  const port = config.port ?? 8765;
+  const port = config.port ?? 8987;
   return { url: `http://localhost:${port}/sse` };
 }
 ```
@@ -1404,9 +1404,9 @@ Exercises the whole chain end to end (server + dashboard as its client), the sam
 
 ```bash
 pnpm build
-node dist/cli/index.js start --transport sse --port 8987 &
+node bin/agent-rack.js start --transport sse --port 8987 &
 sleep 1
-script -q /tmp/dashboard-smoke.log node dist/cli/index.js dashboard --connect http://localhost:8987/sse &
+script -q /dev/null node bin/agent-rack.js dashboard --connect http://localhost:8987/sse > /tmp/dashboard-smoke.log 2>&1 &
 sleep 3
 kill %2 2>/dev/null; kill %1 2>/dev/null
 grep -o "AGENT-RACK DASHBOARD[^│]*" /tmp/dashboard-smoke.log | head -1
@@ -1416,10 +1416,12 @@ rm -f /tmp/dashboard-smoke.log
 Expected: the header line prints with the real current version and no unhandled-exception stack trace. Then re-run the dashboard alone, server not running, to confirm the friendly "Could not reach the agent-rack server…" message appears instead of a crash:
 
 ```bash
-node dist/cli/index.js dashboard --connect http://localhost:8987/sse < /dev/null
+script -q /dev/null node bin/agent-rack.js dashboard --connect http://localhost:8987/sse > /tmp/dashboard-no-server-smoke.log 2>&1
+grep -F "Could not reach the agent-rack server at http://localhost:8987/sse" /tmp/dashboard-no-server-smoke.log
+rm -f /tmp/dashboard-no-server-smoke.log
 ```
 
-Expected: prints the "Could not reach the agent-rack server at http://localhost:8987/sse" message and exits non-zero (no server was started this time).
+Expected: the real pty passes the dashboard's TTY guard, connection preflight prints the "Could not reach the agent-rack server at http://localhost:8987/sse" message, and no unhandled-exception stack trace appears (no server was started this time).
 
 - [ ] **Step 8: Commit**
 

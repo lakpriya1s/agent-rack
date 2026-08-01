@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const DEFAULT_SSE_PORT = 8987;
+
 export const AgentTransportTypeSchema = z.enum([
   'claude_stream_json',
   'agy_stream',

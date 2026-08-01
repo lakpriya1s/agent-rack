@@ -1,4 +1,4 @@
-import type { AgentMCPConfig } from '../../config/schema.js';
+import { DEFAULT_SSE_PORT, type AgentMCPConfig } from '../../config/schema.js';
 
 export type DashboardServerResolution = { url: string } | { error: string };
 
@@ -28,6 +28,6 @@ export function resolveDashboardServerUrl(
     };
   }
 
-  const port = config.port ?? 8987;
+  const port = config.port ?? DEFAULT_SSE_PORT;
   return { url: `http://localhost:${port}/sse` };
 }

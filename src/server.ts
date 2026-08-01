@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig } from './config/loader.js';
+import { DEFAULT_SSE_PORT } from './config/schema.js';
 import { SessionManager } from './engine/session.js';
 import { registerUnifiedTools, MCPToolDefinition } from './tools/unified.js';
 import { registerShortcutTools } from './tools/shortcuts.js';
@@ -105,7 +106,7 @@ export async function startAgentMCPServer(
 ): Promise<http.Server | undefined> {
   const ctx = await createServerContext(options.configPath);
   const targetTransport = options.transport || ctx.config.transport || 'stdio';
-  const targetPort = options.port ?? ctx.config.port ?? 8765;
+  const targetPort = options.port ?? ctx.config.port ?? DEFAULT_SSE_PORT;
 
   // No config file anywhere on the search path means `allowedWorkspaces` silently defaults
   // to the current directory. That is the whole security boundary, so say so out loud.
@@ -146,7 +147,7 @@ export async function startAgentMCPServer(
 
     const httpServer = http.createServer(app);
     return new Promise((resolve) => {
-      httpServer.listen(targetPort, () => {
+      httpServer.listen(targetPort, '127.0.0.1', () => {
         const boundPort = (httpServer.address() as { port: number }).port;
         console.error(`Agent-MCP Server running on HTTP-SSE: http://localhost:${boundPort}/sse`);
         resolve(httpServer);
