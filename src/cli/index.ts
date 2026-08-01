@@ -34,7 +34,7 @@ export function runCLI() {
   program
     .name('agent-rack')
     .description('Model Context Protocol (MCP) Server driving agy, claude, opencode, and CLI agents as MCP tools')
-    .version('0.1.2');
+    .version('0.1.3');
 
   program
     .command('start')
@@ -57,8 +57,12 @@ export function runCLI() {
 
   program
     .command('install')
-    .description('Automatically install and register agent-rack into Claude Code CLI or Claude Desktop')
-    .option('--target <target>', 'Target: claude (Claude Code CLI) or desktop (Claude Desktop App)', 'claude')
+    .description('Automatically install and register agent-rack into Claude Code CLI, Codex CLI, or Claude Desktop')
+    .option(
+      '--target <target>',
+      "Target: claude (Claude Code CLI), codex (Codex CLI), or desktop (Claude Desktop App). Any other value falls back to printing a manual snippet via 'snippet <target>'.",
+      'claude'
+    )
     .action(async (options) => {
       const binPath = resolveBinPath();
 
@@ -69,6 +73,14 @@ export function runCLI() {
           console.log('\n✓ Successfully added agent-rack to Claude Code CLI!');
         } catch (err) {
           console.error('✗ Failed to register with Claude Code CLI:', err instanceof Error ? err.message : String(err));
+        }
+      } else if (options.target === 'codex') {
+        try {
+          console.log('Registering agent-rack with Codex CLI...');
+          await execa('codex', ['mcp', 'add', 'agent-rack', '--', 'node', binPath, 'start'], { stdio: 'inherit' });
+          console.log('\n✓ Successfully added agent-rack to Codex CLI!');
+        } catch (err) {
+          console.error('✗ Failed to register with Codex CLI:', err instanceof Error ? err.message : String(err));
         }
       } else if (options.target === 'desktop') {
         const configPath = path.join(os.homedir(), 'Library/Application Support/Claude/claude_desktop_config.json');
@@ -88,13 +100,20 @@ export function runCLI() {
         } catch (err) {
           console.error('✗ Failed to update Claude Desktop config:', err instanceof Error ? err.message : String(err));
         }
+      } else {
+        console.log(`No automatic registration is available for target '${options.target}' yet.`);
+        console.log(`Run \`agent-rack snippet ${options.target}\` to print the mcpServers JSON, then add it to that client's config by hand.`);
       }
     });
 
   program
     .command('uninstall')
-    .description('Remove agent-rack from Claude Code CLI or Claude Desktop')
-    .option('--target <target>', 'Target: claude (Claude Code CLI) or desktop (Claude Desktop App)', 'claude')
+    .description('Remove agent-rack from Claude Code CLI, Codex CLI, or Claude Desktop')
+    .option(
+      '--target <target>',
+      'Target: claude (Claude Code CLI), codex (Codex CLI), or desktop (Claude Desktop App)',
+      'claude'
+    )
     .action(async (options) => {
       if (options.target === 'claude') {
         try {
@@ -103,6 +122,14 @@ export function runCLI() {
           console.log('\n✓ Successfully removed agent-rack from Claude Code CLI!');
         } catch (err) {
           console.error('✗ Failed to remove from Claude Code CLI:', err instanceof Error ? err.message : String(err));
+        }
+      } else if (options.target === 'codex') {
+        try {
+          console.log('Removing agent-rack from Codex CLI...');
+          await execa('codex', ['mcp', 'remove', 'agent-rack'], { stdio: 'inherit' });
+          console.log('\n✓ Successfully removed agent-rack from Codex CLI!');
+        } catch (err) {
+          console.error('✗ Failed to remove from Codex CLI:', err instanceof Error ? err.message : String(err));
         }
       } else if (options.target === 'desktop') {
         const configPath = path.join(os.homedir(), 'Library/Application Support/Claude/claude_desktop_config.json');
@@ -131,6 +158,9 @@ export function runCLI() {
         } catch (err) {
           console.error('✗ Failed to update Claude Desktop config:', err instanceof Error ? err.message : String(err));
         }
+      } else {
+        console.log(`No automatic removal is available for target '${options.target}'.`);
+        console.log(`If you registered it manually via a printed snippet, remove that entry from the client's config by hand.`);
       }
     });
 

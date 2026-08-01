@@ -45,6 +45,7 @@ For every other MCP client, no cloning, no config file to write by hand — just
 
 ```sh
 npx agent-rack install --target claude     # Claude Code CLI
+npx agent-rack install --target codex      # Codex CLI
 npx agent-rack install --target desktop    # Claude Desktop
 npx agent-rack snippet cursor              # print a snippet to paste anywhere else
 ```
@@ -130,13 +131,18 @@ actually runs in the background — you won't normally invoke it by hand.
 ### `install`
 
 ```sh
-agent-rack install --target claude|desktop   # default: claude
+agent-rack install --target claude|codex|desktop   # default: claude
 ```
 
 - `--target claude` — runs `claude mcp add agent-rack -- node <resolved-bin-path> start`,
   registering the server with the Claude Code CLI.
+- `--target codex` — runs `codex mcp add agent-rack -- node <resolved-bin-path> start`,
+  registering the server with the Codex CLI.
 - `--target desktop` — merges an `mcpServers.agent-rack` entry into your Claude Desktop
   config.
+- Any other target (e.g. `opencode`, `antigravity`, `cursor`) — these clients don't currently
+  expose a scriptable way to register an MCP server non-interactively, so `install` prints a
+  pointer to `agent-rack snippet <target>` instead of silently doing nothing.
 
 ```
 Registering agent-rack with Claude Code CLI...
@@ -146,13 +152,14 @@ Registering agent-rack with Claude Code CLI...
 ### `uninstall`
 
 ```sh
-agent-rack uninstall --target claude|desktop   # default: claude
+agent-rack uninstall --target claude|codex|desktop   # default: claude
 ```
 
 The inverse of `install`: `--target claude` runs `claude mcp remove agent-rack`;
-`--target desktop` backs up `claude_desktop_config.json` to a `.bak` file alongside it, then
-removes the `agent-rack` entry. Safe to run even if it was never installed — it reports
-"nothing to remove" instead of failing. See [Uninstall](#uninstall) below.
+`--target codex` runs `codex mcp remove agent-rack`; `--target desktop` backs up
+`claude_desktop_config.json` to a `.bak` file alongside it, then removes the `agent-rack` entry.
+Safe to run even if it was never installed — it reports "nothing to remove"/"no automatic
+removal" instead of failing. See [Uninstall](#uninstall) below.
 
 ### `config init`
 
@@ -412,10 +419,11 @@ you're on Node 20+ first.
 ## Uninstall
 
 ```sh
-agent-rack uninstall --target claude|desktop   # default: claude
+agent-rack uninstall --target claude|codex|desktop   # default: claude
 ```
 
 - `--target claude` — runs `claude mcp remove agent-rack`.
+- `--target codex` — runs `codex mcp remove agent-rack`.
 - `--target desktop` — backs up `claude_desktop_config.json` to a `.bak` file alongside it, then
   removes the `agent-rack` entry.
 
