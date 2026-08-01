@@ -22,7 +22,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({ sessions }) => {
     );
   }
 
-  const latestReview = reviewSessions[reviewSessions.length - 1];
+  const latestReview = reviewSessions[0];
   const review = latestReview.review;
 
   return (

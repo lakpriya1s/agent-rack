@@ -33,6 +33,7 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
   const [connectionLost, setConnectionLost] = useState(false);
   const eventsOffsetRef = useRef(0);
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
+  const logsPollInFlightRef = useRef(false);
 
   const availableAgents = Object.keys(config.agents);
 
@@ -72,6 +73,9 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
 
     let cancelled = false;
     const poll = async () => {
+      if (logsPollInFlightRef.current) return;
+
+      logsPollInFlightRef.current = true;
       try {
         const newEvents = await remoteClient.getSessionLogs(selected.sessionId, eventsOffsetRef.current);
         if (!cancelled && newEvents.length > 0) {
@@ -80,6 +84,8 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
         }
       } catch {
         // Connection issues are already surfaced by the session-list poll above.
+      } finally {
+        logsPollInFlightRef.current = false;
       }
     };
     poll();
