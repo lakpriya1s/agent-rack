@@ -29,6 +29,36 @@ It also ships a structured, adversarial-capable **code review** tool
 [9 packaged commands and 2 auto-activated guidance skills](#skills) for Claude Code, Cursor, and
 Antigravity.
 
+## One-command shared dashboard
+
+```sh
+npx agent-rack@latest dashboard
+```
+
+That single command opens the terminal dashboard and makes it the shared session hub. It first
+connects to an agent-rack SSE server already listening on the configured port (default `8987`),
+or starts one in-process on `127.0.0.1` when none is reachable. No separate `start` command, port
+selection, or config file is required. With no config file, the built-in default keeps agents
+scoped to the directory where you ran the command.
+
+Once the server is reachable, agent-rack checks Claude Code's `agent-rack` MCP registration. If it
+already points at the same SSE URL, nothing changes. Otherwise you get a one-time confirmation
+before the dashboard opens. Accepting preserves the registration's effective
+`local`/`project`/`user` scope and points it at the shared server; restart or reconnect Claude Code
+once afterward. Declining, a missing Claude CLI, or setup failure only shows a dashboard warning.
+
+An `AUTO-STARTED` server belongs to the dashboard and stops when the dashboard closes. If it has
+running sessions, the first `q` warns and the second `q` cancels them before shutdown. An
+`EXISTING` server is never stopped and its sessions are never bulk-cancelled by dashboard exit.
+Sessions are visible together only after their MCP clients connect to this shared SSE URL.
+
+For advanced use, `--connect <url>` connects to an external server without ever starting,
+stopping, or reconfiguring that server:
+
+```sh
+npx agent-rack@latest dashboard --connect http://127.0.0.1:8987/sse
+```
+
 ---
 
 ## Install
@@ -422,8 +452,8 @@ agent-rack start [-c, --config <path>] [-t, --transport stdio|sse] [-p, --port <
 Starts the MCP server. `--transport` defaults to `stdio` (or `config.transport`); for `sse`,
 `--port` uses `config.port` when set and otherwise defaults to `8987`. SSE listens only on the IPv4
 loopback interface and is reachable at `http://localhost:<port>/sse`; it is not remotely exposed
-and has no authentication. MCP clients normally launch the stdio transport themselves, while the
-shared dashboard workflow below uses one manually started SSE server.
+and has no authentication. MCP clients can launch the stdio transport themselves; the dashboard
+command can also start a temporary shared SSE server in-process.
 
 ### `setup`
 
@@ -500,29 +530,38 @@ Copies agent-rack's skill set into a target agent or project skills directory. I
 agent-rack dashboard [-c, --config <path>] [--connect <url>]
 ```
 
-The dashboard is a client of a running agent-rack server, not a standalone tool — it shows the
-same sessions as other MCP clients configured to that server.
-
-For normal Claude Code usage, no server command is required: Claude Code starts its private
-agent-rack stdio process automatically. Ask Claude Code to use `agent_session_list`,
-`agent_session_status`, or `agent_session_logs` to inspect those sessions.
-
-The terminal dashboard is optional. To use it, start shared mode with these copy-paste commands:
+The dashboard is an MCP client of shared agent-rack server state. In the normal flow it probes the
+loaded config's port (default `8987`), connects to a compatible existing server when present, or
+starts an in-process loopback SSE server itself:
 
 ```sh
-# Terminal 1
-npx agent-rack@latest start --transport sse --port 8987
-
-# Terminal 2
-npx agent-rack@latest dashboard --connect http://localhost:8987/sse
+npx agent-rack@latest dashboard
 ```
 
-Only clients configured to the same SSE URL share the sessions shown in the dashboard. The
-`--connect <url>` option overrides the URL derived from config when needed.
+The reachable server is then offered as a one-time Claude Code MCP registration update before Ink
+starts. A matching SSE registration is left untouched. If you accept a change, agent-rack
+preserves the effective Claude scope (`local`, `project`, or `user`), replaces the old registration,
+and asks you to restart or reconnect Claude Code once. Declining or setup errors do not block the
+dashboard.
 
-The SSE endpoint is deliberately bound to local loopback and has no authentication. If no shared
-server is reachable, the dashboard prints how to start one and exits rather than falling back to a
-disconnected local-only view.
+The footer labels the connection `AUTO-STARTED` or `EXISTING`. Auto-started servers stop with the
+dashboard; when sessions are still running, press `q` once to see the warning and again to cancel
+those sessions and exit. Existing-server sessions are never cancelled just because this dashboard
+closes.
+
+Only sessions created through the shared SSE server appear together. After Claude Code reconnects
+to the offered URL, its background `agent_session_*` work is visible live in the dashboard. A
+private stdio registration remains separate.
+
+`--connect <url>` is advanced external-server mode. It overrides config discovery and never
+auto-starts, stops, or takes ownership of the target:
+
+```sh
+npx agent-rack@latest dashboard --connect http://127.0.0.1:8987/sse
+```
+
+The owned SSE endpoint binds only to IPv4 loopback and has no authentication. The exact loaded
+`allowedWorkspaces` restrictions still apply to every agent subprocess.
 
 Launches an interactive terminal user interface (TUI) built with Ink/React. Provides real-time visibility and control over local agent processes:
 - **Session & Process Monitor**: Live table of running, completed, or failed agent sessions with log streaming (`ParsedAgentEvent` buffer).
