@@ -162,7 +162,7 @@ When configured, `agent-mcp` automatically registers shorthand tools:
 ```json
 {
   "$schema": "./schema/config.schema.json",
-  "port": 8765,
+  "port": 8987,
   "transport": "stdio",
   "allowedWorkspaces": [
     "/Volumes/External/agent-mcp",

@@ -175,8 +175,12 @@ Returns the same shape as `agent_session_create`, updated with current `status`
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `sessionId` | string | yes | — | Session to read events from |
-| `offset` | number | no | `0` | Skip this many events from the start |
+| `offset` | number | no | `0` | Skip this many events from the start of the current bounded snapshot |
 | `limit` | number | no | all remaining | Max events to return |
+
+Session logs retain the most recent 512 parsed events. Calling without `offset` returns that current
+bounded snapshot; clients that continuously monitor logs should refresh the snapshot rather than
+use a cumulative offset after the buffer rolls over.
 
 Returns the raw `ParsedAgentEvent[]` stream (`text`, `tool_call`, `tool_result`, `thought`,
 `status`, or `error` events), each with a timestamp — useful for tailing a long-running session.
@@ -360,8 +364,8 @@ cp agent-rack.config.example.json agent-rack.config.json
 
 | Key | Description |
 | --- | --- |
-| `transport` | `stdio` (default, for local IDE integration) or `sse` (HTTP-SSE, for remote/mobile access) |
-| `port` | HTTP port when `transport` is `sse` |
+| `transport` | `stdio` (default, for per-client local IDE integration) or `sse` (localhost HTTP-SSE, for a shared server and dashboard) |
+| `port` | HTTP port when `transport` is `sse` (default `8987`) |
 | `allowedWorkspaces` | Absolute directory paths agents are permitted to touch. Every tool call is validated against this list before any subprocess spawns — this is the entire security boundary. |
 | `agents` | Map of agent id → `{ name, command, args, transport, env, description, model }` |
 | `security.sanitizeEnv` | Strip env vars matching secret/password/token patterns before spawning agents (default `true`) |
@@ -415,9 +419,11 @@ Running `agent-rack` with no subcommand at all is shorthand for `agent-rack star
 agent-rack start [-c, --config <path>] [-t, --transport stdio|sse] [-p, --port <number>]
 ```
 
-Starts the MCP server. `--transport` defaults to `stdio` (or `config.transport`); `--port`
-defaults to `8765` (or `config.port`) and only applies to `sse`. This is what your MCP client
-actually runs in the background — you won't normally invoke it by hand.
+Starts the MCP server. `--transport` defaults to `stdio` (or `config.transport`); for `sse`,
+`--port` uses `config.port` when set and otherwise defaults to `8987`. SSE listens only on the IPv4
+loopback interface and is reachable at `http://localhost:<port>/sse`; it is not remotely exposed
+and has no authentication. MCP clients normally launch the stdio transport themselves, while the
+shared dashboard workflow below uses one manually started SSE server.
 
 ### `setup`
 
@@ -491,8 +497,26 @@ Copies agent-rack's skill set into a target agent or project skills directory. I
 ### `dashboard` (alias `ui`)
 
 ```sh
-agent-rack dashboard [-c, --config <path>]
+agent-rack dashboard [-c, --config <path>] [--connect <url>]
 ```
+
+The dashboard is a client of a running agent-rack server, not a standalone tool — it shows the
+same sessions any other MCP client (Claude Code, Codex, etc.) creates, and vice versa. The normal
+`setup`/`install` flow registers a private stdio process per client; use this shared-server setup
+when you want one cross-client session list:
+
+1. Run `npx agent-rack config init`, then change the generated config's `"transport"` to `"sse"`.
+   The generated `"port": 8987` is the shared-server default; keep `allowedWorkspaces` limited to
+   the directories agents may access.
+2. Start the localhost-only server and leave it running: `npx agent-rack start`.
+3. Configure every participating MCP client to connect to `http://localhost:8987/sse` instead of
+   spawning its own `agent-rack start` command over stdio.
+4. Run `npx agent-rack dashboard`. It derives the same URL from the config; `--connect <url>`
+   overrides it when needed.
+
+The SSE endpoint is deliberately bound to local loopback and has no authentication. If no shared
+server is reachable, the dashboard prints how to start one and exits rather than falling back to a
+disconnected local-only view.
 
 Launches an interactive terminal user interface (TUI) built with Ink/React. Provides real-time visibility and control over local agent processes:
 - **Session & Process Monitor**: Live table of running, completed, or failed agent sessions with log streaming (`ParsedAgentEvent` buffer).

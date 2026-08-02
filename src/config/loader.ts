@@ -1,13 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { AgentMCPConfig, AgentMCPConfigSchema } from './schema.js';
+import { AgentMCPConfig, AgentMCPConfigSchema, DEFAULT_SSE_PORT } from './schema.js';
 
 export function getDefaultConfig(workspacePath?: string): AgentMCPConfig {
   const currentWorkspace = path.resolve(workspacePath || process.cwd());
 
   return AgentMCPConfigSchema.parse({
     transport: 'stdio',
+    port: DEFAULT_SSE_PORT,
     allowedWorkspaces: [currentWorkspace],
     agents: {
       agy: {

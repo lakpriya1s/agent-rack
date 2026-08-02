@@ -87,3 +87,55 @@ describe('agent_session_create tool', () => {
     }
   });
 });
+
+describe('agent_session_list tool', () => {
+  it('lists every session with its kind, most recent first', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mcp-unified-tool-'));
+    try {
+      const config = getDefaultConfig(dir);
+      config.agents['echoer'] = echoArgsAgentConfig(dir);
+      const sessionManager = new SessionManager(config);
+      const tools = registerUnifiedTools(config, sessionManager);
+      const sessionCreateTool = tools.find((t) => t.name === 'agent_session_create')!;
+      const sessionListTool = tools.find((t) => t.name === 'agent_session_list')!;
+
+      const created = await sessionCreateTool.handler({ agent: 'echoer', prompt: 'hello', workspace: dir });
+      const sessionInfo = JSON.parse((created.content as any)[0].text);
+      await waitForSessionCompletion(sessionManager, sessionInfo.sessionId);
+
+      const listed = await sessionListTool.handler({});
+      const sessions = JSON.parse((listed.content as any)[0].text);
+
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].sessionId).toBe(sessionInfo.sessionId);
+      expect(sessions[0].kind).toBe('task');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('agent_session_create tool kind param', () => {
+  it('creates a review-kind session when kind: "review" is passed', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mcp-unified-tool-'));
+    try {
+      const config = getDefaultConfig(dir);
+      config.agents['echoer'] = echoArgsAgentConfig(dir);
+      const sessionManager = new SessionManager(config);
+      const tools = registerUnifiedTools(config, sessionManager);
+      const sessionCreateTool = tools.find((t) => t.name === 'agent_session_create')!;
+
+      const response = await sessionCreateTool.handler({
+        agent: 'echoer',
+        prompt: 'hello',
+        workspace: dir,
+        kind: 'review',
+      });
+      const sessionInfo = JSON.parse((response.content as any)[0].text);
+
+      expect(sessionInfo.kind).toBe('review');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
