@@ -12,7 +12,10 @@ import { ReviewView } from './ReviewView.js';
 import { LauncherModal } from './LauncherModal.js';
 import { SendInputModal } from './SendInputModal.js';
 import type { DashboardServerMode } from './serverCoordinator.js';
-import { decideDashboardExitFromServer } from './exitDecision.js';
+import {
+  dashboardExitVerificationFailure,
+  decideDashboardExitFromServer,
+} from './exitDecision.js';
 
 interface AppProps {
   config: AgentMCPConfig;
@@ -179,10 +182,9 @@ export const DashboardApp: React.FC<AppProps> = ({
         exit();
       }
     } catch (error) {
-      setExitArmed(true);
-      setStatusMessage(
-        `Could not verify running sessions before shutdown: ${error instanceof Error ? error.message : String(error)}. Press q to retry.`
-      );
+      const failure = dashboardExitVerificationFailure(error);
+      setExitArmed(failure.exitArmed);
+      setStatusMessage(failure.statusMessage);
     } finally {
       quitInFlight.current = false;
     }

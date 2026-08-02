@@ -5,6 +5,20 @@ export type DashboardExitDecision =
   | { action: 'warn'; runningCount: number }
   | { action: 'cancel-and-exit'; sessionIds: string[] };
 
+export interface DashboardExitVerificationFailure {
+  exitArmed: false;
+  statusMessage: string;
+}
+
+export function dashboardExitVerificationFailure(
+  error: unknown
+): DashboardExitVerificationFailure {
+  return {
+    exitArmed: false,
+    statusMessage: `Could not verify running sessions before shutdown: ${error instanceof Error ? error.message : String(error)}. Press q to retry.`,
+  };
+}
+
 export async function decideDashboardExitFromServer(
   mode: DashboardServerMode,
   armed: boolean,

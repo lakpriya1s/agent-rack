@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { decideDashboardExit, decideDashboardExitFromServer } from './exitDecision.js';
+import {
+  decideDashboardExit,
+  decideDashboardExitFromServer,
+  dashboardExitVerificationFailure,
+} from './exitDecision.js';
 
 describe('decideDashboardExit', () => {
   it('exits existing/external mode immediately without cancellations', () => {
@@ -36,6 +40,18 @@ describe('decideDashboardExit', () => {
     await expect(
       decideDashboardExitFromServer('auto-started', true, listSessions)
     ).resolves.toEqual({ action: 'cancel-and-exit', sessionIds: ['just-started'] });
+  });
+
+  it('keeps exit unarmed after verification fails so a successful retry still warns first', async () => {
+    const failure = dashboardExitVerificationFailure(new Error('connection lost'));
+    expect(failure.exitArmed).toBe(false);
+    expect(failure.statusMessage).toContain('Press q to retry');
+
+    await expect(
+      decideDashboardExitFromServer('auto-started', failure.exitArmed, async () => [
+        { sessionId: 'still-running', status: 'running' },
+      ])
+    ).resolves.toEqual({ action: 'warn', runningCount: 1 });
   });
 
   it('does not query an existing server when dashboard exit cannot own its sessions', async () => {
