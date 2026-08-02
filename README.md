@@ -29,39 +29,23 @@ It also ships a structured, adversarial-capable **code review** tool
 [9 packaged commands and 2 auto-activated guidance skills](#skills) for Claude Code, Cursor, and
 Antigravity.
 
-## One-command shared dashboard
+## Dashboard
+
+Every `agent_run`/`agent_session_*` call above is invisible unless you go looking for it — the
+dashboard is a terminal UI that makes those sessions visible and controllable in real time,
+across every MCP client connected to the same server.
 
 ```sh
 npx agent-rack@latest dashboard
 ```
 
-That single command opens the terminal dashboard and makes it the shared session hub. It first
-connects to an agent-rack SSE server already listening on the configured port (default `8987`),
-or starts one in-process on `127.0.0.1` when none is reachable. No separate `start` command, port
-selection, or config file is required. With no config file, the built-in default keeps agents
-scoped to the directory where you ran the command.
+Connects to an existing agent-rack server if one's already running, or starts one itself — no
+separate `start` command or config needed. See [`dashboard`](#dashboard-alias-ui) below for
+registration behavior, `--connect`, and full details.
 
-Once the server is reachable, agent-rack checks Claude Code's `agent-rack` MCP registration. If it
-already points at the same SSE URL, nothing changes. If no registration exists, you get a one-time
-confirmation before the dashboard opens; accepting adds it at local scope, and restarting or
-reconnecting Claude Code once applies it. A different registration is replaced only after
-confirmation when agent-rack can safely reconstruct it for rollback, preserving its scope. Entries
-with unsupported or unrecoverable settings are left unchanged with scope-aware manual guidance. If
-replacement fails, agent-rack attempts restoration and reports whether it succeeded without exposing
-sensitive configuration. Declining, a missing Claude CLI, or setup failure only shows a dashboard
-warning.
-
-An `AUTO-STARTED` server belongs to the dashboard and stops when the dashboard closes. If it has
-running sessions, the first `q` warns and the second `q` cancels them before shutdown. An
-`EXISTING` server is never stopped and its sessions are never bulk-cancelled by dashboard exit.
-Sessions are visible together only after their MCP clients connect to this shared SSE URL.
-
-For advanced use, `--connect <url>` connects to an external server without ever starting,
-stopping, or reconfiguring that server:
-
-```sh
-npx agent-rack@latest dashboard --connect http://127.0.0.1:8987/sse
-```
+<div align="center">
+<img src="./assets/dashboard-screenshot.png" alt="agent-rack dashboard TUI showing live sessions, session details, and event stream" width="720">
+</div>
 
 ---
 
