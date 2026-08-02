@@ -91,6 +91,23 @@ describe('coordinateDashboardServer', () => {
     expect(startServer).not.toHaveBeenCalled();
   });
 
+  it('times out a hanging local probe and reports the occupied listen port promptly', async () => {
+    const hanging = http.createServer(() => {
+      // Accept the SSE probe but intentionally never send headers or a response.
+    });
+    httpServers.push(hanging);
+    const port = await listen(hanging);
+    const config = getDefaultConfig();
+    config.port = port;
+
+    await expect(
+      Promise.race([
+        coordinateDashboardServer(config, undefined, { probeTimeoutMs: 50 }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('coordinator timed out')), 250)),
+      ])
+    ).rejects.toThrow(`Cannot auto-start the dashboard server on 127.0.0.1:${port}`);
+  });
+
   it('rejects promptly with a friendly error when its port is occupied', async () => {
     const occupied = http.createServer((_req, res) => res.writeHead(404).end());
     httpServers.push(occupied);

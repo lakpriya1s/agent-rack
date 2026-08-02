@@ -23,26 +23,42 @@ export interface DashboardConnection {
 export interface DashboardCoordinatorDependencies {
   createClient(url: string): DashboardRemoteClient;
   startServer(config: AgentMCPConfig, port: number): Promise<AgentMCPHTTPServer>;
+  probeTimeoutMs: number;
 }
 
 const defaults: DashboardCoordinatorDependencies = {
   createClient: (url) => new DashboardRemoteClient(url),
   startServer: (config, port) =>
     startSSEServer(createServerContextFromConfig(config), port),
+  probeTimeoutMs: 2000,
 };
 
 async function connectClient(
   url: string,
-  createClient: DashboardCoordinatorDependencies['createClient']
+  createClient: DashboardCoordinatorDependencies['createClient'],
+  timeoutMs: number
 ): Promise<DashboardRemoteClient> {
   const client = createClient(url);
+  let timeout: NodeJS.Timeout | undefined;
   try {
-    await client.connect();
-    await client.listSessions();
+    await Promise.race([
+      (async () => {
+        await client.connect();
+        await client.listSessions();
+      })(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Connection probe timed out after ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      }),
+    ]);
     return client;
   } catch (error) {
     await client.close().catch(() => undefined);
     throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -56,7 +72,7 @@ export async function coordinateDashboardServer(
 
   if (connectUrl) {
     try {
-      const client = await connectClient(resolution.url, deps.createClient);
+      const client = await connectClient(resolution.url, deps.createClient, deps.probeTimeoutMs);
       return {
         url: resolution.url,
         mode: 'existing',
@@ -69,7 +85,7 @@ export async function coordinateDashboardServer(
   }
 
   try {
-    const client = await connectClient(resolution.url, deps.createClient);
+    const client = await connectClient(resolution.url, deps.createClient, deps.probeTimeoutMs);
     return {
       url: resolution.url,
       mode: 'existing',
@@ -90,7 +106,7 @@ export async function coordinateDashboardServer(
 
   let client: DashboardRemoteClient | undefined;
   try {
-    client = await connectClient(ownedServer.url, deps.createClient);
+    client = await connectClient(ownedServer.url, deps.createClient, deps.probeTimeoutMs);
   } catch (error) {
     await ownedServer.close().catch(() => undefined);
     throw new Error(`The auto-started dashboard server could not be reached: ${error instanceof Error ? error.message : String(error)}`);
