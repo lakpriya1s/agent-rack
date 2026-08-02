@@ -2,12 +2,14 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { createAgentMCPServer, startAgentMCPServer } from './server.js';
+import { createAgentMCPServer, createServerContextFromConfig, startAgentMCPServer, startSSEServer } from './server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import type { AddressInfo } from 'net';
 import type http from 'http';
+import net from 'net';
+import { getDefaultConfig } from './config/loader.js';
 
 let runningServer: http.Server | undefined;
 
@@ -46,6 +48,57 @@ describe('agent_review tool registration', () => {
     const toolNames = tools.map((t) => t.name);
 
     expect(toolNames).toContain('agent_review');
+  });
+});
+
+describe('loaded-config SSE server API', () => {
+  it('uses the exact loaded config and releases its port on close', async () => {
+    const config = getDefaultConfig('/tmp/agent-rack-loaded-config-sentinel');
+    const context = createServerContextFromConfig(config);
+    expect(context.config).toBe(config);
+    expect(context.config.allowedWorkspaces).toEqual(['/tmp/agent-rack-loaded-config-sentinel']);
+
+    const handle = await startSSEServer(context, 0);
+    const port = (handle.server.address() as AddressInfo).port;
+    expect(handle.url).toBe(`http://127.0.0.1:${port}/sse`);
+
+    const client = new Client({ name: 'loaded-config-test', version: '1.0.0' }, { capabilities: {} });
+    try {
+      await client.connect(new SSEClientTransport(new URL(handle.url)));
+      expect((await client.listTools()).tools.length).toBeGreaterThan(0);
+    } finally {
+      await client.close();
+      await handle.close();
+    }
+
+    const rebound = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      rebound.once('error', reject);
+      rebound.listen(port, '127.0.0.1', resolve);
+    });
+    await new Promise<void>((resolve, reject) =>
+      rebound.close((error) => (error ? reject(error) : resolve()))
+    );
+  });
+
+  it('rejects promptly when the requested port cannot be listened on', async () => {
+    const occupied = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      occupied.once('error', reject);
+      occupied.listen(0, '127.0.0.1', resolve);
+    });
+    const port = (occupied.address() as AddressInfo).port;
+
+    try {
+      await expect(
+        Promise.race([
+          startSSEServer(createServerContextFromConfig(getDefaultConfig()), port),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('listen timed out')), 500)),
+        ])
+      ).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    } finally {
+      await new Promise<void>((resolve) => occupied.close(() => resolve()));
+    }
   });
 });
 
