@@ -29,24 +29,6 @@ It also ships a structured, adversarial-capable **code review** tool
 [9 packaged commands and 2 auto-activated guidance skills](#skills) for Claude Code, Cursor, and
 Antigravity.
 
-## Dashboard
-
-Every `agent_run`/`agent_session_*` call above is invisible unless you go looking for it — the
-dashboard is a terminal UI that makes those sessions visible and controllable in real time,
-across every MCP client connected to the same server.
-
-```sh
-npx agent-rack@latest dashboard
-```
-
-Connects to an existing agent-rack server if one's already running, or starts one itself — no
-separate `start` command or config needed. See [`dashboard`](#dashboard-alias-ui) below for
-registration behavior, `--connect`, and full details.
-
-<div align="center">
-<img src="./assets/dashboard-screenshot.png" alt="agent-rack dashboard TUI showing live sessions, session details, and event stream" width="720">
-</div>
-
 ---
 
 ## Install
@@ -517,6 +499,14 @@ Copies agent-rack's skill set into a target agent or project skills directory. I
 ```sh
 agent-rack dashboard [-c, --config <path>] [--connect <url>]
 ```
+
+Every `agent_run`/`agent_session_*` call is invisible unless you go looking for it — the
+dashboard is a terminal UI that makes those sessions visible and controllable in real time,
+across every MCP client connected to the same server.
+
+<div align="center">
+<img src="./assets/dashboard-screenshot.png" alt="agent-rack dashboard TUI showing live sessions, session details, and event stream" width="720">
+</div>
 
 The dashboard is an MCP client of shared agent-rack server state. In the normal flow it probes the
 loaded config's port (default `8987`), connects to a compatible existing server when present, or
