@@ -42,10 +42,12 @@ selection, or config file is required. With no config file, the built-in default
 scoped to the directory where you ran the command.
 
 Once the server is reachable, agent-rack checks Claude Code's `agent-rack` MCP registration. If it
-already points at the same SSE URL, nothing changes. Otherwise you get a one-time confirmation
-before the dashboard opens. Accepting preserves the registration's effective
-`local`/`project`/`user` scope and points it at the shared server; restart or reconnect Claude Code
-once afterward. Declining, a missing Claude CLI, or setup failure only shows a dashboard warning.
+already points at the same SSE URL, nothing changes. If no registration exists, you get a one-time
+confirmation before the dashboard opens; accepting adds it at local scope, and restarting or
+reconnecting Claude Code once applies it. A different existing registration is left untouched
+because Claude Code cannot expose enough detail to restore it losslessly; the dashboard shows the
+scope-aware manual replacement command instead. Declining, a missing Claude CLI, or setup failure
+only shows a dashboard warning.
 
 An `AUTO-STARTED` server belongs to the dashboard and stops when the dashboard closes. If it has
 running sessions, the first `q` warns and the second `q` cancels them before shutdown. An
