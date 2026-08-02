@@ -10,6 +10,7 @@ import { loadConfig, getDefaultConfig, saveConfig } from '../config/loader.js';
 import { listAgentAvailability, isBinaryAvailable } from '../engine/availability.js';
 import { handleCpCommand, copySkills } from './skills.js';
 import { getPackageVersion } from './version.js';
+import { runSessionList, runSessionStatus, runSessionTail } from './session.js';
 
 /**
  * Path to the executable as MCP clients must spell it. Resolved from `process.argv[1]` — the
@@ -567,6 +568,64 @@ export function runCLI() {
     .option('--prefix <prefix>', 'Prefix for skill directory names', 'agent-rack-')
     .action((dest, options) => {
       handleCpCommand(dest, options);
+    });
+
+  const sessionCmd = program
+    .command('session')
+    .description('Poll background sub-agent sessions on a running agent-rack SSE server (e.g. from a shell watch loop)');
+
+  sessionCmd
+    .command('status <sessionId>')
+    .description(
+      'Print one background session\'s current status as a single diffable line — meant to be ' +
+        'called on an interval from a shell script (e.g. a Claude Code Monitor loop) that reports ' +
+        'only when the line changes'
+    )
+    .option('-c, --config <path>', 'Path to agent-rack.config.json')
+    .option('--connect <url>', 'URL of a running agent-rack SSE server (default: derived from config)')
+    .option('--json', 'Print the full session JSON instead of a compact line')
+    .action(async (sessionId, options) => {
+      try {
+        await runSessionStatus(sessionId, options);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    });
+
+  sessionCmd
+    .command('tail <sessionId>')
+    .description(
+      'Print the most recent activity (text, tool calls) from a background session, instead of ' +
+        "just its status word — meant to feed a Monitor loop's Output panel with what the " +
+        'sub-agent is actually generating'
+    )
+    .option('-c, --config <path>', 'Path to agent-rack.config.json')
+    .option('--connect <url>', 'URL of a running agent-rack SSE server (default: derived from config)')
+    .option('--count <n>', 'Number of most recent events to print (default: 5)', (val) => parseInt(val, 10))
+    .option('--json', 'Print the full event objects instead of compact lines')
+    .action(async (sessionId, options) => {
+      try {
+        await runSessionTail(sessionId, options);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    });
+
+  sessionCmd
+    .command('list')
+    .description('List every background session tracked by a running agent-rack SSE server')
+    .option('-c, --config <path>', 'Path to agent-rack.config.json')
+    .option('--connect <url>', 'URL of a running agent-rack SSE server (default: derived from config)')
+    .option('--json', 'Print the full session JSON instead of compact lines')
+    .action(async (options) => {
+      try {
+        await runSessionList(options);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
     });
 
   program

@@ -102,9 +102,18 @@ groups into one dispatch map, and serves over stdio or HTTP-SSE (`config.transpo
 **cli/index.ts** — Commander-based CLI (`bin/agent-rack.js` entry point): `start`, `install`
 (registers agent-rack with Claude Code CLI or Claude Desktop via their respective config
 mechanisms), `config init`/`config-check`, `agents` (checks each configured binary against
-`$PATH`), `snippet`. `resolveBinPath()` resolves from `process.argv[1]` (the script Node
-actually ran), so `install` and `snippet` produce correct paths under a local checkout, a global
-npm install, or `npx` alike — regardless of cwd.
+`$PATH`), `snippet`, `session` (see below). `resolveBinPath()` resolves from `process.argv[1]`
+(the script Node actually ran), so `install` and `snippet` produce correct paths under a local
+checkout, a global npm install, or `npx` alike — regardless of cwd.
+
+**cli/session.ts** — `agent-rack session status|tail|list`: connect-only CLI commands (no
+auto-start, unlike the dashboard) that poll an already-running `sse`-transport server via
+`DashboardRemoteClient`, for driving background-session visibility from a plain shell script
+(e.g. a Claude Code Monitor loop) that can't make MCP tool calls itself. `status` prints one
+diffable line (status/eventCount/summary) to drive change detection; `tail` prints the most
+recent event content (what the sub-agent is actually generating) once a change is detected —
+deliberately two separate calls rather than one combined command, since polling should stay
+cheap and only fetch content when something changed.
 
 ## Key invariants to preserve
 

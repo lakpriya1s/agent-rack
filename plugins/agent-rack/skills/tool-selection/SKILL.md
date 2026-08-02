@@ -29,10 +29,31 @@ Use when:
 - the user might want to send follow-up input mid-task (`agent_session_send`), or
 - the task should be cancelable (`agent_session_cancel`) if it goes off track.
 
-Once started, poll `agent_session_status` for the summary rather than `agent_session_logs`
-unless the user specifically wants the raw event-by-event stream (e.g. to debug unexpected
-behavior). Don't poll in a tight loop — check once, report status, and let the user decide
-whether to check again.
+Once started, tell the user it's running and give them the `sessionId` — a background session
+has no persistent UI signal of its own (no status-line badge, no expandable details panel) the
+way a native Monitor task does, so narrating it is the only visibility the user gets unless you
+set up one of the following.
+
+For anything that will run more than a couple of minutes, don't just wait for the user to ask —
+proactively surface progress:
+
+- **If a Monitor tool (or equivalent persistent background-shell mechanism) is available**, pair
+  `agent_session_create` with one that polls on an interval and reports only on change, mirroring
+  a PR-babysitting loop. This only works if agent-rack is reachable over `sse` transport with a
+  known URL (the mode `agent-rack dashboard` uses) — a Monitor script is a plain shell subprocess
+  and can't reach a `stdio`-registered server, since that connection is private to this
+  conversation. When it applies, use the CLI (not raw MCP calls, which a shell script can't make):
+  - `agent-rack session status <sessionId> [--connect <url>]` — one diffable line (status,
+    event count, summary). Cheap; use this as the change-detection trigger, same role `gh pr
+    view` plays in a PR-babysitting loop.
+  - `agent-rack session tail <sessionId> [--count N] [--connect <url>]` — the most recent
+    text/tool-call content, i.e. what the sub-agent is actually generating, not just a status
+    word. Call this once `status` shows a change, and put its output in the report to the user.
+- **Otherwise (the common default `stdio` registration)**, there's no external process that can
+  poll the session, so do it yourself from the main loop: periodically call `agent_session_status`
+  (and `agent_session_logs` if you want the content, not just the summary) and post a one-line
+  update to the user when something changes. Still don't poll in a tight loop with no delay
+  between checks.
 
 ## `agent_review` specifically
 

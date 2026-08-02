@@ -502,7 +502,8 @@ agent-rack dashboard [-c, --config <path>] [--connect <url>]
 
 Every `agent_run`/`agent_session_*` call is invisible unless you go looking for it — the
 dashboard is a terminal UI that makes those sessions visible and controllable in real time,
-across every MCP client connected to the same server.
+across every MCP client connected to the same server. For a scriptable, non-interactive
+equivalent (e.g. polling from a Monitor loop), see [`session status`/`tail`/`list`](#session-status--session-tail--session-list) below.
 
 <div align="center">
 <img src="./assets/dashboard-screenshot.png" alt="agent-rack dashboard TUI showing live sessions, session details, and event stream" width="720">
@@ -548,6 +549,39 @@ Launches an interactive terminal user interface (TUI) built with Ink/React. Prov
 - **Agent Launcher**: Manually trigger one-off agent tasks or `agent_review` runs directly from the terminal.
 - **System & Binary Inspector**: Check binary availability on `$PATH` and active security sandbox settings.
 - **Review Inspector**: Structured visual inspector for code review verdicts, findings, and recommendations.
+
+### `session status` / `session tail` / `session list`
+
+```sh
+agent-rack session status <sessionId> [--connect <url>] [--json]
+agent-rack session tail <sessionId> [--count 5] [--connect <url>] [--json]
+agent-rack session list [--connect <url>] [--json]
+```
+
+The dashboard above is for a human watching a terminal. These are the scriptable equivalent —
+plain, non-interactive commands for polling a background `agent_session_*` session from a shell
+script, e.g. a Claude Code `Monitor` loop babysitting a long-running task the same way you'd
+babysit a PR's CI. Like `dashboard --connect`, they only poll an already-running `sse`-transport
+server and never auto-start, stop, or take ownership of it; if none is reachable they exit `1`
+with a pointer to `agent-rack start --transport sse` or `agent-rack dashboard`.
+
+`status` prints one line per session, cheap to diff against a previous poll to detect a change:
+
+```
+sessionId=3f9c2b7a-1e4d-4a2b-9c3e-8f7a6b5c4d3e agent=codex kind=task status=running events=4 summary=""
+```
+
+`tail` prints the session's most recent activity — actual text/tool-call content, not just a
+status word — once you've detected a change and want to show what the sub-agent is actually
+generating:
+
+```
+[text] Added input validation to the signup form
+[tool_call:Edit] src/signup.ts
+```
+
+`list` runs `status`'s formatting over every session tracked by the server. All three accept
+`--json` for the raw `AgentSessionInfo`/`ParsedAgentEvent` objects instead.
 
 ### `uninstall`
 
