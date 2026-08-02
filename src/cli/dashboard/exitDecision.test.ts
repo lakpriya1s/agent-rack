@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideDashboardExit } from './exitDecision.js';
+import { decideDashboardExit, decideDashboardExitFromServer } from './exitDecision.js';
 
 describe('decideDashboardExit', () => {
   it('exits existing/external mode immediately without cancellations', () => {
@@ -22,5 +22,28 @@ describe('decideDashboardExit', () => {
       action: 'cancel-and-exit',
       sessionIds: ['running-1', 'running-2'],
     });
+  });
+
+  it('uses an authoritative server snapshot instead of a stale UI list', async () => {
+    const listSessions = async () => [
+      { sessionId: 'just-started', status: 'running' },
+      { sessionId: 'finished', status: 'completed' },
+    ];
+
+    await expect(
+      decideDashboardExitFromServer('auto-started', false, listSessions)
+    ).resolves.toEqual({ action: 'warn', runningCount: 1 });
+    await expect(
+      decideDashboardExitFromServer('auto-started', true, listSessions)
+    ).resolves.toEqual({ action: 'cancel-and-exit', sessionIds: ['just-started'] });
+  });
+
+  it('does not query an existing server when dashboard exit cannot own its sessions', async () => {
+    const listSessions = async (): Promise<Array<{ sessionId: string; status: string }>> => {
+      throw new Error('must not query');
+    };
+    await expect(
+      decideDashboardExitFromServer('existing', false, listSessions)
+    ).resolves.toEqual({ action: 'exit' });
   });
 });

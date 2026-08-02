@@ -26,6 +26,24 @@ describe('parseClaudeMcpGet', () => {
     });
   });
 
+  it('parses JSON output while preserving effective scope and SSE URL', () => {
+    expect(
+      parseClaudeMcpGet(
+        JSON.stringify({
+          name: 'agent-rack',
+          scope: 'user',
+          type: 'sse',
+          url: 'http://127.0.0.1:8987/sse',
+        })
+      )
+    ).toEqual({
+      exists: true,
+      scope: 'user',
+      type: 'sse',
+      url: 'http://127.0.0.1:8987/sse',
+    });
+  });
+
   it('recognizes a missing registration and defaults its future scope to local', () => {
     expect(parseClaudeMcpGet('No MCP server named "agent-rack". Configured servers:')).toEqual({
       exists: false,
@@ -83,7 +101,7 @@ describe('ensureClaudeDashboardRegistration', () => {
 
   it('adds a missing registration at local scope', async () => {
     const run = fakeRunner([
-      { stdout: 'No MCP server named "agent-rack".', exitCode: 1 },
+      { stderr: 'No MCP server named "agent-rack".', exitCode: 1 },
       {},
     ]);
     await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {

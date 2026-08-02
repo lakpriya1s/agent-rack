@@ -5,6 +5,22 @@ export type DashboardExitDecision =
   | { action: 'warn'; runningCount: number }
   | { action: 'cancel-and-exit'; sessionIds: string[] };
 
+export async function decideDashboardExitFromServer(
+  mode: DashboardServerMode,
+  armed: boolean,
+  listSessions: () => Promise<Array<{ sessionId: string; status: string }>>
+): Promise<DashboardExitDecision> {
+  if (mode === 'existing') return { action: 'exit' };
+  const sessions = await listSessions();
+  return decideDashboardExit(
+    mode,
+    armed,
+    sessions
+      .filter((session) => session.status === 'running')
+      .map((session) => session.sessionId)
+  );
+}
+
 export function decideDashboardExit(
   mode: DashboardServerMode,
   armed: boolean,

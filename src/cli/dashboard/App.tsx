@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { AgentMCPConfig } from '../../config/schema.js';
 import { AgentSessionInfo } from '../../engine/session.js';
@@ -12,7 +12,7 @@ import { ReviewView } from './ReviewView.js';
 import { LauncherModal } from './LauncherModal.js';
 import { SendInputModal } from './SendInputModal.js';
 import type { DashboardServerMode } from './serverCoordinator.js';
-import { decideDashboardExit } from './exitDecision.js';
+import { decideDashboardExitFromServer } from './exitDecision.js';
 
 interface AppProps {
   config: AgentMCPConfig;
@@ -87,6 +87,7 @@ export const DashboardApp: React.FC<AppProps> = ({
   const [activeTab, setActiveTab] = useState<'sessions' | 'launcher' | 'system' | 'reviews'>('sessions');
   const [statusMessage, setStatusMessage] = useState<string | undefined>(startupMessage);
   const [exitArmed, setExitArmed] = useState(false);
+  const quitInFlight = useRef(false);
   const [showSendInputModal, setShowSendInputModal] = useState(false);
   const [connectionLost, setConnectionLost] = useState(false);
 
@@ -155,17 +156,15 @@ export const DashboardApp: React.FC<AppProps> = ({
 
   const activeSessionsCount = sessions.filter((s) => s.status === 'running').length;
 
-  useInput((input, key) => {
-    if (activeTab === 'launcher' || showSendInputModal) {
-      return;
-    }
-
-    const requestedQuit = input === 'q' || (input === 'c' && key.ctrl);
-    if (requestedQuit) {
-      const runningSessionIds = sessions
-        .filter((session) => session.status === 'running')
-        .map((session) => session.sessionId);
-      const decision = decideDashboardExit(serverMode, exitArmed, runningSessionIds);
+  const requestExit = async () => {
+    if (quitInFlight.current) return;
+    quitInFlight.current = true;
+    try {
+      const decision = await decideDashboardExitFromServer(
+        serverMode,
+        exitArmed,
+        () => remoteClient.listSessions()
+      );
       if (decision.action === 'exit') {
         exit();
       } else if (decision.action === 'warn') {
@@ -174,10 +173,29 @@ export const DashboardApp: React.FC<AppProps> = ({
           `${decision.runningCount} session${decision.runningCount === 1 ? '' : 's'} still running. Press q again to cancel and close the auto-started server.`
         );
       } else {
-        void Promise.allSettled(
+        await Promise.allSettled(
           decision.sessionIds.map((sessionId) => remoteClient.cancelSession(sessionId))
-        ).then(() => exit());
+        );
+        exit();
       }
+    } catch (error) {
+      setExitArmed(true);
+      setStatusMessage(
+        `Could not verify running sessions before shutdown: ${error instanceof Error ? error.message : String(error)}. Press q to retry.`
+      );
+    } finally {
+      quitInFlight.current = false;
+    }
+  };
+
+  useInput((input, key) => {
+    if (activeTab === 'launcher' || showSendInputModal) {
+      return;
+    }
+
+    const requestedQuit = input === 'q' || (input === 'c' && key.ctrl);
+    if (requestedQuit) {
+      void requestExit();
       return;
     }
 

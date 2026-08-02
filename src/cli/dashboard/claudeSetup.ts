@@ -32,6 +32,27 @@ export interface ClaudeSetupResult {
 }
 
 export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistration {
+  try {
+    const parsed = JSON.parse(stdout) as Record<string, unknown>;
+    const scopeValue = typeof parsed.scope === 'string' ? parsed.scope.toLowerCase() : 'local';
+    const scope: ClaudeScope =
+      scopeValue === 'project' || scopeValue === 'user' ? scopeValue : 'local';
+    const type = typeof parsed.type === 'string' ? parsed.type.toLowerCase() : undefined;
+    const url = typeof parsed.url === 'string' ? parsed.url : undefined;
+    const identifiesAgentRack =
+      parsed.name === 'agent-rack' || 'scope' in parsed || 'type' in parsed || 'url' in parsed;
+    if (identifiesAgentRack) {
+      return {
+        exists: parsed.exists !== false,
+        scope,
+        ...(type ? { type } : {}),
+        ...(url ? { url } : {}),
+      };
+    }
+  } catch {
+    // Current Claude Code emits labeled text; JSON support keeps this parser future-compatible.
+  }
+
   const output = `${stdout}\n${stderr}`;
   if (/No MCP server named\s+["']?agent-rack/i.test(output)) {
     return { exists: false, scope: 'local' };
@@ -113,10 +134,13 @@ export async function ensureClaudeDashboardRegistration(
   }
 
   const registration = parseClaudeMcpGet(inspected.stdout, inspected.stderr);
+  const missingRegistration = /No MCP server named/i.test(
+    `${inspected.stdout}\n${inspected.stderr}`
+  );
   if (inspected.exitCode !== 0 && registration.exists) {
     return commandFailure('inspect agent-rack', inspected);
   }
-  if (inspected.exitCode !== 0 && !registration.exists && !/No MCP server named/i.test(inspected.stdout)) {
+  if (inspected.exitCode !== 0 && !registration.exists && !missingRegistration) {
     return commandFailure('inspect agent-rack', inspected);
   }
 
