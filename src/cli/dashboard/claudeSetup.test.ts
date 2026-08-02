@@ -125,6 +125,90 @@ describe('ensureClaudeDashboardRegistration', () => {
     ]);
   });
 
+  it('migrates a real-world stdio registration whose empty "Environment:" label has no entries', async () => {
+    // Actual `claude mcp get` output always prints a trailing "Environment:" label, even when
+    // there are no environment variables set. A bare label with no indented entries must not be
+    // treated as an unsupported/unrecoverable setting.
+    const stdio =
+      'agent-rack:\n' +
+      '  Scope: Local config (private to you in this project)\n' +
+      '  Status: ✔ Connected\n' +
+      '  Type: stdio\n' +
+      '  Command: node\n' +
+      '  Args: /Users/example/.npm/_npx/abc123/node_modules/.bin/agent-rack start\n' +
+      '  Environment:\n' +
+      '\n' +
+      'To remove this server, run: claude mcp remove agent-rack -s local\n';
+    const run = fakeRunner([{ stdout: stdio }, {}, {}]);
+
+    const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
+      run,
+      confirm: async () => true,
+    });
+
+    expect(result.notice).toContain('now points to this shared dashboard server');
+    expect(run).toHaveBeenNthCalledWith(2, 'claude', [
+      'mcp', 'remove', 'agent-rack', '--scope', 'local',
+    ]);
+    expect(run).toHaveBeenNthCalledWith(3, 'claude', [
+      'mcp', 'add', '--transport', 'sse', '--scope', 'local', 'agent-rack', 'http://127.0.0.1:8987/sse',
+    ]);
+  });
+
+  it('parses labeled-text environment entries, preserving values with spaces, and restores them losslessly', async () => {
+    const stdio =
+      'agent-rack:\n' +
+      '  Scope: User config (available in all your projects)\n' +
+      '  Type: stdio\n' +
+      '  Command: node\n' +
+      '  Args: server.js\n' +
+      '  Environment:\n' +
+      '    FOO=bar\n' +
+      '    SPACE=hello world\n' +
+      '\n' +
+      'To remove this server, run: claude mcp remove agent-rack -s user\n';
+    expect(parseClaudeMcpGet(stdio)).toMatchObject({
+      exists: true,
+      scope: 'user',
+      type: 'stdio',
+      command: 'node',
+      args: ['server.js'],
+      env: { FOO: 'bar', SPACE: 'hello world' },
+    });
+
+    const run = fakeRunner([{ stdout: stdio }, {}, { exitCode: 1, stderr: 'add failed' }, {}]);
+    await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
+      run,
+      confirm: async () => true,
+    });
+
+    expect(run).toHaveBeenNthCalledWith(4, 'claude', [
+      'mcp', 'add', '--transport', 'stdio', '--scope', 'user',
+      '-e', 'FOO=bar', '-e', 'SPACE=hello world',
+      'agent-rack', 'node', 'server.js',
+    ]);
+  });
+
+  it('marks labeled-text registrations with unparseable environment entries as unsafe to replace', async () => {
+    const stdio =
+      'agent-rack:\n' +
+      '  Scope: Local config (private to you in this project)\n' +
+      '  Type: stdio\n' +
+      '  Command: node\n' +
+      '  Args: server.js\n' +
+      '  Environment:\n' +
+      '    not a key value line\n' +
+      '\n' +
+      'To remove this server, run: claude mcp remove agent-rack -s local\n';
+    const run = fakeRunner([{ stdout: stdio }]);
+    const confirm = vi.fn();
+
+    const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', { run, confirm });
+
+    expect(result.warning).toContain('left unchanged');
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
   it('restores a mismatched stdio registration if its SSE migration add fails', async () => {
     const stdio = `agent-rack:\n  Scope: Project config (shared with your team)\n  Type: stdio\n  Command: npx\n  Args: -y agent-rack start\n`;
     const run = fakeRunner([{ stdout: stdio }, {}, { exitCode: 1, stderr: 'add failed' }, {}]);

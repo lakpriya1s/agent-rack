@@ -125,7 +125,20 @@ export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistrati
       })
     : undefined;
   const exists = /^\s*agent-rack:\s*$/im.test(output) || Boolean(scopeLabel || type || url);
-  const hasUnrecoverableOptions = /^\s*(?:Env(?:ironment)?|Headers?|Auth(?:entication)?|OAuth|Client ID|Timeout|Options?):/im.test(output);
+
+  const { env, unsupported: envUnsupported } = parseIndentedKeyValueSection(
+    output,
+    /^\s*Environment:\s*$/im,
+    /^([^=\s][^=]*)=(.*)$/
+  );
+  const { headers, unsupported: headersUnsupported } = parseIndentedKeyValueSection(
+    output,
+    /^\s*Headers?:\s*$/im,
+    /^([^:\s][^:]*):\s*(.*)$/
+  );
+  const hasUnrecoverableFields = /^\s*(?:Auth(?:entication)?|OAuth|Client ID|Timeout|Options?):\s*\S/im.test(
+    output
+  );
 
   return {
     exists,
@@ -134,8 +147,50 @@ export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistrati
     ...(url ? { url } : {}),
     ...(command ? { command } : {}),
     ...(args ? { args } : {}),
-    ...(exists && hasUnrecoverableOptions ? { unsupportedOptions: true } : {}),
+    ...(env ? { env } : {}),
+    ...(headers ? { headers } : {}),
+    ...(exists && (envUnsupported || headersUnsupported || hasUnrecoverableFields)
+      ? { unsupportedOptions: true }
+      : {}),
   };
+}
+
+/**
+ * `claude mcp get` prints "Environment:"/"Headers:" as a bare label (2-space indent) followed by
+ * zero or more 4-space-indented entries — the label alone (no entries) means the section is
+ * empty, which is safe to restore as-is, not a reason to block migration.
+ */
+function parseIndentedKeyValueSection(
+  output: string,
+  header: RegExp,
+  entryPattern: RegExp
+): { env?: Record<string, string>; headers?: string[]; unsupported: boolean } {
+  const lines = output.split('\n');
+  const headerIndex = lines.findIndex((line) => header.test(line));
+  if (headerIndex === -1) return { unsupported: false };
+
+  const headerIndent = lines[headerIndex].match(/^(\s*)/)?.[0].length ?? 0;
+  const entries: string[] = [];
+  for (let i = headerIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '') break;
+    const indent = line.match(/^(\s*)/)?.[0].length ?? 0;
+    if (indent <= headerIndent) break;
+    entries.push(line.trim());
+  }
+
+  if (entries.length === 0) return { unsupported: false };
+
+  const parsed: [string, string][] = [];
+  for (const entry of entries) {
+    const match = entry.match(entryPattern);
+    if (!match) return { unsupported: true };
+    parsed.push([match[1], match[2]]);
+  }
+
+  return entryPattern.source.includes('=')
+    ? { env: Object.fromEntries(parsed), unsupported: false }
+    : { headers: parsed.map(([name, value]) => `${name}: ${value}`), unsupported: false };
 }
 
 const defaultRun: ClaudeCommandRunner = async (command, args) => {
