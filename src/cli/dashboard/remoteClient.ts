@@ -15,6 +15,8 @@ export interface DashboardServerIdentity {
   launchMetadata: DashboardLaunchMetadata;
 }
 
+const DASHBOARD_MCP_REQUEST_TIMEOUT_MS = 3000;
+
 const REQUIRED_DASHBOARD_TOOLS = [
   'agent_server_identity',
   'agent_session_list',
@@ -64,7 +66,11 @@ export class DashboardRemoteClient {
   }
 
   private async callTool(name: string, args: Record<string, unknown> = {}): Promise<string> {
-    const result = await this.client.callTool({ name, arguments: args });
+    const result = await this.client.callTool(
+      { name, arguments: args },
+      undefined,
+      { timeout: DASHBOARD_MCP_REQUEST_TIMEOUT_MS }
+    );
     const content = (result.content as Array<{ type: string; text?: string }>)?.[0];
     if (!content || content.type !== 'text' || typeof content.text !== 'string') {
       throw new Error(`Tool '${name}' returned no text content`);
@@ -76,7 +82,9 @@ export class DashboardRemoteClient {
   }
 
   async validateDashboardServer(): Promise<DashboardServerIdentity> {
-    const { tools } = await this.client.listTools();
+    const { tools } = await this.client.listTools(undefined, {
+      timeout: DASHBOARD_MCP_REQUEST_TIMEOUT_MS,
+    });
     const available = new Set(tools.map((tool) => tool.name));
     const missing = REQUIRED_DASHBOARD_TOOLS.filter((tool) => !available.has(tool));
     if (missing.length > 0) {
