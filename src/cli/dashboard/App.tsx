@@ -11,12 +11,16 @@ import { SystemView } from './SystemView.js';
 import { ReviewView } from './ReviewView.js';
 import { LauncherModal } from './LauncherModal.js';
 import { SendInputModal } from './SendInputModal.js';
+import type { DashboardServerMode } from './serverCoordinator.js';
+import { decideDashboardExit } from './exitDecision.js';
 
 interface AppProps {
   config: AgentMCPConfig;
   configPath?: string;
   version?: string;
   remoteClient: DashboardRemoteClient;
+  serverMode: DashboardServerMode;
+  startupMessage?: string;
 }
 
 const SESSION_LIST_POLL_MS = 1500;
@@ -65,7 +69,14 @@ export function moveSessionSelection(
   return { ...state, selectedSessionId: state.sessions[nextIndex].sessionId };
 }
 
-export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, remoteClient }) => {
+export const DashboardApp: React.FC<AppProps> = ({
+  config,
+  configPath,
+  version,
+  remoteClient,
+  serverMode,
+  startupMessage,
+}) => {
   const { exit } = useApp();
   const [sessionListState, setSessionListState] = useState<DashboardSessionListState>({
     sessions: [],
@@ -74,7 +85,8 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
   const { sessions, selectedSessionId } = sessionListState;
   const [events, setEvents] = useState<ParsedAgentEvent[]>([]);
   const [activeTab, setActiveTab] = useState<'sessions' | 'launcher' | 'system' | 'reviews'>('sessions');
-  const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined);
+  const [statusMessage, setStatusMessage] = useState<string | undefined>(startupMessage);
+  const [exitArmed, setExitArmed] = useState(false);
   const [showSendInputModal, setShowSendInputModal] = useState(false);
   const [connectionLost, setConnectionLost] = useState(false);
 
@@ -148,10 +160,28 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
       return;
     }
 
-    if (input === 'q') {
-      exit();
+    const requestedQuit = input === 'q' || (input === 'c' && key.ctrl);
+    if (requestedQuit) {
+      const runningSessionIds = sessions
+        .filter((session) => session.status === 'running')
+        .map((session) => session.sessionId);
+      const decision = decideDashboardExit(serverMode, exitArmed, runningSessionIds);
+      if (decision.action === 'exit') {
+        exit();
+      } else if (decision.action === 'warn') {
+        setExitArmed(true);
+        setStatusMessage(
+          `${decision.runningCount} session${decision.runningCount === 1 ? '' : 's'} still running. Press q again to cancel and close the auto-started server.`
+        );
+      } else {
+        void Promise.allSettled(
+          decision.sessionIds.map((sessionId) => remoteClient.cancelSession(sessionId))
+        ).then(() => exit());
+      }
       return;
     }
+
+    if (exitArmed) setExitArmed(false);
 
     if (input === '1') {
       setActiveTab('sessions');
@@ -257,7 +287,7 @@ export const DashboardApp: React.FC<AppProps> = ({ config, configPath, version, 
         <ReviewView sessions={sessions} />
       )}
 
-      <Footer statusMessage={statusMessage} />
+      <Footer statusMessage={statusMessage} serverMode={serverMode} />
     </Box>
   );
 };

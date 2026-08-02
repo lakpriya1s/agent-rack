@@ -1,13 +1,22 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import type { DashboardServerMode } from './serverCoordinator.js';
 
 interface FooterProps {
   statusMessage?: string;
+  serverMode: DashboardServerMode;
 }
 
-export const Footer: React.FC<FooterProps> = ({ statusMessage }) => {
+export const Footer: React.FC<FooterProps> = ({ statusMessage, serverMode }) => {
   return (
     <Box flexDirection="column" marginTop={1}>
+      <Box paddingX={1}>
+        <Text bold color={serverMode === 'auto-started' ? 'green' : 'cyan'}>
+          {serverMode === 'auto-started'
+            ? 'AUTO-STARTED — this shared server stops when the dashboard closes.'
+            : 'EXISTING — connected without owning the shared server.'}
+        </Text>
+      </Box>
       {statusMessage && (
         <Box paddingX={1}>
           <Text bold color="yellow">

@@ -41,6 +41,7 @@ export async function startDashboard(customConfigPath?: string, connectFlag?: st
         configPath={filePath || undefined}
         version={getPackageVersion()}
         remoteClient={remoteClient}
+        serverMode="existing"
       />
     );
     await waitUntilExit();
