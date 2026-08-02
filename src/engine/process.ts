@@ -133,7 +133,7 @@ export class AgentProcessController {
             .then((result) => {
               if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
               this.finishCancellationTree();
-            if (this.killTimer) clearTimeout(this.killTimer);
+              if (this.killTimer) clearTimeout(this.killTimer);
               this.execaSubprocess = undefined;
               const exitCode = result.exitCode ?? 0;
               const formattedResult = this.adapter.formatResponse(this.buffer.getAll(), exitCode);
@@ -143,7 +143,7 @@ export class AgentProcessController {
             .catch((err) => {
               if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
               this.finishCancellationTree();
-            if (this.killTimer) clearTimeout(this.killTimer);
+              if (this.killTimer) clearTimeout(this.killTimer);
               this.execaSubprocess = undefined;
               reject(timeoutError ?? err);
             });

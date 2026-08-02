@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { AgentSessionInfo } from '../../engine/session.js';
 import {
   dashboardConfigAuthorityWarning,
@@ -6,6 +6,7 @@ import {
   prependLaunchedSession,
   refreshSessionList,
   shouldRequestDashboardExit,
+  withDashboardRequestTimeout,
   type DashboardSessionListState,
 } from './App.js';
 
@@ -60,6 +61,18 @@ describe('dashboard session selection', () => {
     expect(shouldRequestDashboardExit('c', true, true)).toBe(true);
     expect(shouldRequestDashboardExit('q', false, true)).toBe(false);
     expect(shouldRequestDashboardExit('q', false, false)).toBe(true);
+  });
+
+  it('times out a never-settling listSessions call so quit handling can continue', async () => {
+    vi.useFakeTimers();
+    const listSessions = vi.fn(() => new Promise<AgentSessionInfo[]>(() => undefined));
+    const request = withDashboardRequestTimeout(listSessions(), 100);
+    const rejected = expect(request).rejects.toThrow('timed out');
+
+    await vi.advanceTimersByTimeAsync(100);
+    await rejected;
+    expect(listSessions).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 
   it('moves keyboard selection by id and wraps at both ends', () => {

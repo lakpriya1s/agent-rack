@@ -30,6 +30,30 @@ interface AppProps {
 
 const SESSION_LIST_POLL_MS = 1500;
 const SESSION_LOGS_POLL_MS = 750;
+const DASHBOARD_REQUEST_TIMEOUT_MS = 3000;
+
+/** Bounds remote MCP operations so a stalled SSE request cannot block dashboard cleanup forever. */
+export function withDashboardRequestTimeout<T>(
+  request: Promise<T>,
+  timeoutMs = DASHBOARD_REQUEST_TIMEOUT_MS
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Dashboard server request timed out after ${timeoutMs}ms.`)),
+      timeoutMs
+    );
+    request.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 export interface DashboardSessionListState {
   sessions: AgentSessionInfo[];
@@ -122,15 +146,20 @@ export const DashboardApp: React.FC<AppProps> = ({
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
     const poll = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
       try {
-        const list = await remoteClient.listSessions();
+        const list = await withDashboardRequestTimeout(remoteClient.listSessions());
         if (!cancelled) {
           setSessionListState((state) => refreshSessionList(state, list));
           setConnectionLost(false);
         }
       } catch {
         if (!cancelled) setConnectionLost(true);
+      } finally {
+        inFlight = false;
       }
     };
     poll();
@@ -156,7 +185,9 @@ export const DashboardApp: React.FC<AppProps> = ({
 
       inFlight = true;
       try {
-        const snapshot = await remoteClient.getSessionLogs(selectedSessionId);
+        const snapshot = await withDashboardRequestTimeout(
+          remoteClient.getSessionLogs(selectedSessionId)
+        );
         if (!cancelled) setEvents(snapshot);
       } catch {
         // Connection issues are already surfaced by the session-list poll above.
@@ -207,7 +238,7 @@ export const DashboardApp: React.FC<AppProps> = ({
       const decision = await decideDashboardExitFromServer(
         serverMode,
         exitArmedRef.current,
-        () => remoteClient.listSessions()
+        () => withDashboardRequestTimeout(remoteClient.listSessions())
       );
       exitVerificationFailed.current = false;
       if (decision.action === 'exit') {
