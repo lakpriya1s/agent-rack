@@ -12,11 +12,12 @@ export function formatSharedDashboardHelp(
   try {
     const parsed = new URL(serverUrl);
     if (
-      parsed.hostname === 'localhost' ||
-      parsed.hostname === '127.0.0.1' ||
-      parsed.hostname === '[::1]'
+      parsed.protocol === 'http:' &&
+      (parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === '[::1]')
     ) {
-      const port = parsed.port || String(DEFAULT_SSE_PORT);
+      const port = parsed.port || '80';
       startInstruction = [
         'Terminal 1:',
         `  npx agent-rack@latest start --transport sse --port ${port}`,

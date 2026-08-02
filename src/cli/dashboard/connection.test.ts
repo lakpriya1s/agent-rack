@@ -61,4 +61,23 @@ describe('resolveDashboardServerUrl', () => {
 
     expect(help).toContain('npx agent-rack@latest start --transport sse --port 9999');
   });
+
+  it('uses HTTP port 80 for a portless localhost URL', () => {
+    const help = formatSharedDashboardHelp('http://localhost/sse');
+
+    expect(help).toContain('npx agent-rack@latest start --transport sse --port 80');
+    expect(help).toContain('npx agent-rack@latest dashboard --connect http://localhost/sse');
+  });
+
+  it('does not offer a local start command for a remote URL', () => {
+    const help = formatSharedDashboardHelp('http://example.com:9999/sse');
+
+    expect(help).toContain(
+      'Ensure the shared MCP server at http://example.com:9999/sse is running.'
+    );
+    expect(help).not.toContain('npx agent-rack@latest start');
+    expect(help).toContain(
+      'npx agent-rack@latest dashboard --connect http://example.com:9999/sse'
+    );
+  });
 });
