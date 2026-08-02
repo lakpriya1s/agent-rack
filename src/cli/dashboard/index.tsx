@@ -4,7 +4,7 @@ import { loadConfig } from '../../config/loader.js';
 import { DashboardApp } from './App.js';
 import { dashboardTTYError } from './tty.js';
 import { getPackageVersion } from '../version.js';
-import { resolveDashboardServerUrl } from './connection.js';
+import { formatSharedDashboardHelp, resolveDashboardServerUrl } from './connection.js';
 import { DashboardRemoteClient } from './remoteClient.js';
 
 export async function startDashboard(customConfigPath?: string, connectFlag?: string): Promise<void> {
@@ -29,9 +29,9 @@ export async function startDashboard(customConfigPath?: string, connectFlag?: st
     await remoteClient.listSessions();
   } catch (err) {
     console.error(
-      `Could not reach the agent-rack server at ${resolution.url}.\n` +
-        `Start it first with: agent-rack start --transport sse --port <port>\n` +
-        `(${err instanceof Error ? err.message : String(err)})`
+      `Could not reach the agent-rack server at ${resolution.url}.\n\n` +
+        `${formatSharedDashboardHelp(resolution.url)}\n\n` +
+        `Connection error: ${err instanceof Error ? err.message : String(err)}`
     );
     process.exitCode = 1;
     await remoteClient.close();

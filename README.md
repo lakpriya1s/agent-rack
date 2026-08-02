@@ -501,18 +501,24 @@ agent-rack dashboard [-c, --config <path>] [--connect <url>]
 ```
 
 The dashboard is a client of a running agent-rack server, not a standalone tool — it shows the
-same sessions any other MCP client (Claude Code, Codex, etc.) creates, and vice versa. The normal
-`setup`/`install` flow registers a private stdio process per client; use this shared-server setup
-when you want one cross-client session list:
+same sessions as other MCP clients configured to that server.
 
-1. Run `npx agent-rack config init`, then change the generated config's `"transport"` to `"sse"`.
-   The generated `"port": 8987` is the shared-server default; keep `allowedWorkspaces` limited to
-   the directories agents may access.
-2. Start the localhost-only server and leave it running: `npx agent-rack start`.
-3. Configure every participating MCP client to connect to `http://localhost:8987/sse` instead of
-   spawning its own `agent-rack start` command over stdio.
-4. Run `npx agent-rack dashboard`. It derives the same URL from the config; `--connect <url>`
-   overrides it when needed.
+For normal Claude Code usage, no server command is required: Claude Code starts its private
+agent-rack stdio process automatically. Ask Claude Code to use `agent_session_list`,
+`agent_session_status`, or `agent_session_logs` to inspect those sessions.
+
+The terminal dashboard is optional. To use it, start shared mode with these copy-paste commands:
+
+```sh
+# Terminal 1
+npx agent-rack@latest start --transport sse --port 8987
+
+# Terminal 2
+npx agent-rack@latest dashboard --connect http://localhost:8987/sse
+```
+
+Only clients configured to the same SSE URL share the sessions shown in the dashboard. The
+`--connect <url>` option overrides the URL derived from config when needed.
 
 The SSE endpoint is deliberately bound to local loopback and has no authentication. If no shared
 server is reachable, the dashboard prints how to start one and exits rather than falling back to a
