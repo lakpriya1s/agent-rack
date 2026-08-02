@@ -1,51 +1,96 @@
 import React from 'react';
 import { render } from 'ink';
-import { loadConfig } from '../../config/loader.js';
+import { loadConfig as loadAgentRackConfig } from '../../config/loader.js';
 import { DashboardApp } from './App.js';
 import { dashboardTTYError } from './tty.js';
 import { getPackageVersion } from '../version.js';
-import { formatDashboardConnectionFailure, resolveDashboardServerUrl } from './connection.js';
-import { DashboardRemoteClient } from './remoteClient.js';
+import {
+  coordinateDashboardServer,
+  type DashboardConnection,
+} from './serverCoordinator.js';
+import {
+  ensureClaudeDashboardRegistration,
+  type ClaudeSetupResult,
+} from './claudeSetup.js';
 
-export async function startDashboard(customConfigPath?: string, connectFlag?: string): Promise<void> {
-  const ttyError = dashboardTTYError(process.stdin);
-  if (ttyError) {
-    console.error(ttyError);
-    process.exitCode = 1;
-    return;
-  }
+export interface DashboardRenderProps {
+  config: ReturnType<typeof loadAgentRackConfig>['config'];
+  configPath?: string;
+  version: string;
+  remoteClient: DashboardConnection['client'];
+  serverMode: DashboardConnection['mode'];
+  startupMessage?: string;
+}
 
-  const { config, filePath } = loadConfig(customConfigPath);
-  const resolution = resolveDashboardServerUrl(config, connectFlag);
-  if ('error' in resolution) {
-    console.error(resolution.error);
-    process.exitCode = 1;
-    return;
-  }
+export interface DashboardStartupDependencies {
+  stdin: { isTTY?: boolean };
+  loadConfig: typeof loadAgentRackConfig;
+  coordinate: typeof coordinateDashboardServer;
+  setupClaude(url: string): Promise<ClaudeSetupResult>;
+  renderDashboard(props: DashboardRenderProps): Promise<void>;
+  reportError(message: string): void;
+  setExitCode(code: number): void;
+}
 
-  const remoteClient = new DashboardRemoteClient(resolution.url);
-  try {
-    await remoteClient.connect();
-    await remoteClient.listSessions();
-  } catch (err) {
-    console.error(formatDashboardConnectionFailure(resolution.url, err));
-    process.exitCode = 1;
-    await remoteClient.close();
-    return;
-  }
-
-  try {
-    const { waitUntilExit } = render(
-      <DashboardApp
-        config={config}
-        configPath={filePath || undefined}
-        version={getPackageVersion()}
-        remoteClient={remoteClient}
-        serverMode="existing"
-      />
-    );
+const defaultDependencies: DashboardStartupDependencies = {
+  stdin: process.stdin,
+  loadConfig: loadAgentRackConfig,
+  coordinate: coordinateDashboardServer,
+  setupClaude: ensureClaudeDashboardRegistration,
+  renderDashboard: async (props) => {
+    const { waitUntilExit } = render(<DashboardApp {...props} />, { exitOnCtrlC: false });
     await waitUntilExit();
+  },
+  reportError: (message) => console.error(message),
+  setExitCode: (code) => {
+    process.exitCode = code;
+  },
+};
+
+export async function startDashboard(
+  customConfigPath?: string,
+  connectFlag?: string,
+  dependencies: Partial<DashboardStartupDependencies> = {}
+): Promise<void> {
+  const deps = { ...defaultDependencies, ...dependencies };
+
+  // Ink requires a real terminal; this guard must precede config loading and every side effect.
+  const ttyError = dashboardTTYError(deps.stdin);
+  if (ttyError) {
+    deps.reportError(ttyError);
+    deps.setExitCode(1);
+    return;
+  }
+
+  const { config, filePath } = deps.loadConfig(customConfigPath);
+  let connection: DashboardConnection;
+  try {
+    connection = await deps.coordinate(config, connectFlag);
+  } catch (error) {
+    deps.reportError(error instanceof Error ? error.message : String(error));
+    deps.setExitCode(1);
+    return;
+  }
+
+  try {
+    let setup: ClaudeSetupResult;
+    try {
+      setup = await deps.setupClaude(connection.url);
+    } catch (error) {
+      setup = {
+        warning: `Claude Code MCP setup failed: ${error instanceof Error ? error.message : String(error)}. The dashboard will still open.`,
+      };
+    }
+
+    await deps.renderDashboard({
+      config,
+      configPath: filePath || undefined,
+      version: getPackageVersion(),
+      remoteClient: connection.client,
+      serverMode: connection.mode,
+      startupMessage: setup.warning ?? setup.notice,
+    });
   } finally {
-    await remoteClient.close();
+    await connection.close();
   }
 }
