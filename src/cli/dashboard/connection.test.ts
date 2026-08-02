@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { getDefaultConfig } from '../../config/loader.js';
-import { formatSharedDashboardHelp, resolveDashboardServerUrl } from './connection.js';
+import {
+  formatDashboardConnectionFailure,
+  formatSharedDashboardHelp,
+  resolveDashboardServerUrl,
+} from './connection.js';
 
 describe('resolveDashboardServerUrl', () => {
   it('uses 8987 as the generated config and shared-server default', () => {
@@ -56,10 +60,29 @@ describe('resolveDashboardServerUrl', () => {
     );
   });
 
-  it('recognizes IPv6 loopback URLs as local shared servers', () => {
+  it('does not offer a local start command for IPv6 loopback URLs', () => {
     const help = formatSharedDashboardHelp('http://[::1]:9999/sse');
 
-    expect(help).toContain('npx agent-rack@latest start --transport sse --port 9999');
+    expect(help).toContain(
+      'Ensure the shared MCP server at http://[::1]:9999/sse is running.'
+    );
+    expect(help).not.toContain('npx agent-rack@latest start');
+  });
+
+  it('does not offer a local start command for unsupported paths', () => {
+    const help = formatSharedDashboardHelp('http://localhost:9999/events');
+
+    expect(help).toContain(
+      'Ensure the shared MCP server at http://localhost:9999/events is running.'
+    );
+    expect(help).not.toContain('npx agent-rack@latest start');
+  });
+
+  it('does not offer a local start command for a non-addressable port', () => {
+    const help = formatSharedDashboardHelp('http://localhost:0/sse');
+
+    expect(help).toContain('Ensure the shared MCP server at http://localhost:0/sse is running.');
+    expect(help).not.toContain('npx agent-rack@latest start');
   });
 
   it('uses HTTP port 80 for a portless localhost URL', () => {
@@ -67,6 +90,24 @@ describe('resolveDashboardServerUrl', () => {
 
     expect(help).toContain('npx agent-rack@latest start --transport sse --port 80');
     expect(help).toContain('npx agent-rack@latest dashboard --connect http://localhost/sse');
+  });
+
+  it('quotes query metacharacters in the dashboard command', () => {
+    const serverUrl = 'http://localhost:9999/sse?mode=a&next=b;done=yes';
+    const help = formatSharedDashboardHelp(serverUrl);
+
+    expect(help).toContain(
+      "npx agent-rack@latest dashboard --connect 'http://localhost:9999/sse?mode=a&next=b;done=yes'"
+    );
+  });
+
+  it('quotes embedded single quotes in the dashboard command', () => {
+    const serverUrl = "http://localhost:9999/sse?label=it's";
+    const help = formatSharedDashboardHelp(serverUrl);
+
+    expect(help).toContain(
+      `npx agent-rack@latest dashboard --connect 'http://localhost:9999/sse?label=it'"'"'s'`
+    );
   });
 
   it('does not offer a local start command for a remote URL', () => {
@@ -79,5 +120,20 @@ describe('resolveDashboardServerUrl', () => {
     expect(help).toContain(
       'npx agent-rack@latest dashboard --connect http://example.com:9999/sse'
     );
+  });
+});
+
+describe('formatDashboardConnectionFailure', () => {
+  it('combines the requested URL, original error, and shared-dashboard help', () => {
+    const message = formatDashboardConnectionFailure(
+      'http://localhost:9999/sse',
+      new Error('socket refused')
+    );
+
+    expect(message).toContain('Could not reach the agent-rack server at http://localhost:9999/sse.');
+    expect(message).toContain('Connection error: socket refused');
+    expect(message).toContain('npx agent-rack@latest start --transport sse --port 9999');
+    expect(message).toContain('agent_session_list');
+    expect(message).toContain('private stdio');
   });
 });
