@@ -6,7 +6,7 @@ export type DashboardExitDecision =
   | { action: 'cancel-and-exit'; sessionIds: string[] };
 
 export interface DashboardExitVerificationFailure {
-  exitArmed: false;
+  exitArmed: boolean;
   statusMessage: string;
 }
 
@@ -14,8 +14,8 @@ export function dashboardExitVerificationFailure(
   error: unknown
 ): DashboardExitVerificationFailure {
   return {
-    exitArmed: false,
-    statusMessage: `Could not verify running sessions before shutdown: ${error instanceof Error ? error.message : String(error)}. Press q to retry.`,
+    exitArmed: true,
+    statusMessage: `Could not verify running sessions before shutdown: ${error instanceof Error ? error.message : String(error)}. Press q again to close the auto-started server anyway.`,
   };
 }
 

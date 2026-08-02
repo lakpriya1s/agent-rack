@@ -3,10 +3,16 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import type { ParsedAgentEvent } from '../../adapters/base.js';
 import type { AgentSessionInfo, SessionKind } from '../../engine/session.js';
 
+export interface DashboardLaunchMetadata {
+  agents: string[];
+  allowedWorkspaces: string[];
+}
+
 export interface DashboardServerIdentity {
   server: 'agent-rack';
   identityVersion: 1;
   configFingerprint: string;
+  launchMetadata: DashboardLaunchMetadata;
 }
 
 const REQUIRED_DASHBOARD_TOOLS = [
@@ -84,7 +90,12 @@ export class DashboardRemoteClient {
       identity.server !== 'agent-rack' ||
       identity.identityVersion !== 1 ||
       typeof identity.configFingerprint !== 'string' ||
-      !/^sha256:[0-9a-f]{64}$/.test(identity.configFingerprint)
+      !/^sha256:[0-9a-f]{64}$/.test(identity.configFingerprint) ||
+      !identity.launchMetadata ||
+      !Array.isArray(identity.launchMetadata.agents) ||
+      !identity.launchMetadata.agents.every((agent) => typeof agent === 'string') ||
+      !Array.isArray(identity.launchMetadata.allowedWorkspaces) ||
+      !identity.launchMetadata.allowedWorkspaces.every((workspace) => typeof workspace === 'string')
     ) {
       throw new Error('Server returned an invalid agent-rack identity.');
     }

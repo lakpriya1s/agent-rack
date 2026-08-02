@@ -20,6 +20,7 @@ export interface DashboardRenderProps {
   remoteClient: DashboardConnection['client'];
   serverMode: DashboardConnection['mode'];
   configAuthority: DashboardConnection['configAuthority'];
+  launchMetadata: DashboardConnection['launchMetadata'];
   startupMessage?: string;
 }
 
@@ -34,6 +35,10 @@ export interface DashboardStartupDependencies {
   renderDashboard(props: DashboardRenderProps): Promise<void>;
   reportError(message: string): void;
   setExitCode(code: number): void;
+}
+
+export function isDashboardSetupAbort(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 const defaultDependencies: DashboardStartupDependencies = {
@@ -84,6 +89,7 @@ export async function startDashboard(
     try {
       setup = await deps.setupClaude(connection.url, connection.configAuthority);
     } catch (error) {
+      if (isDashboardSetupAbort(error)) return;
       setup = {
         warning: `Claude Code MCP setup failed: ${error instanceof Error ? error.message : String(error)}. The dashboard will still open.`,
       };
@@ -96,6 +102,7 @@ export async function startDashboard(
       remoteClient: connection.client,
       serverMode: connection.mode,
       configAuthority: connection.configAuthority,
+      launchMetadata: connection.launchMetadata,
       startupMessage: setup.warning ?? setup.notice,
     });
   } finally {

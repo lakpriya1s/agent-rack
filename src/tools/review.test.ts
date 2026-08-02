@@ -60,6 +60,8 @@ describe('agent_review tool', () => {
       expect(review.verdict).toBe('needs-attention');
       expect(review.findings).toHaveLength(1);
       expect(review.findings[0].file).toBe('changed.txt');
+      expect(sessionManager.listSessions()).toHaveLength(1);
+      expect(sessionManager.listSessions()[0].kind).toBe('review');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

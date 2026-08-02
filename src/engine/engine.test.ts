@@ -106,7 +106,7 @@ describe('SessionManager shutdown', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('keeps a timed-out PTY child tracked through forced termination', async () => {
+  it('keeps a stubborn PTY child tracked until shutdown without timing-dependent readiness', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-rack-pty-shutdown-'));
     const pidFile = path.join(dir, 'child.pid');
     const config = getDefaultConfig(dir);
@@ -124,16 +124,13 @@ describe('SessionManager shutdown', () => {
     let pid: number | undefined;
 
     try {
-      const session = manager.createSession('stubborn_pty', 'wait', dir, undefined, {
-        timeoutSeconds: 0.05,
-      });
+      const session = manager.createSession('stubborn_pty', 'wait', dir);
       const deadline = Date.now() + 2000;
       while (!fs.existsSync(pidFile) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       expect(fs.existsSync(pidFile)).toBe(true);
       pid = Number(fs.readFileSync(pidFile, 'utf8'));
-      await new Promise((resolve) => setTimeout(resolve, 100));
       expect(session.status).toBe('running');
 
       await manager.shutdown();
@@ -146,6 +143,63 @@ describe('SessionManager shutdown', () => {
           process.kill(pid, 'SIGKILL');
         } catch {
           // The shutdown path already terminated it.
+        }
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it('terminates a signal-resistant descendant before shutdown settles', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-rack-tree-shutdown-'));
+    const pidFile = path.join(dir, 'descendant.pid');
+    const config = getDefaultConfig(dir);
+    config.agents['tree_runner'] = {
+      name: 'Tree Runner',
+      command: 'node',
+      args: ['-e', `
+        const { spawn } = require('node:child_process');
+        const child = spawn(process.execPath, ['-e', ${JSON.stringify(`
+          require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+          process.on('SIGINT', () => {});
+          setInterval(() => {}, 1000);
+        `)}], { stdio: 'ignore' });
+        process.on('SIGINT', () => process.exit(0));
+        setInterval(() => {}, 1000);
+      `],
+      transport: 'claude_stream_json',
+      env: {},
+    };
+    const manager = new SessionManager(config);
+    let descendantPid: number | undefined;
+
+    try {
+      manager.createSession('tree_runner', 'wait', dir);
+      const deadline = Date.now() + 2000;
+      while (!fs.existsSync(pidFile) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(fs.existsSync(pidFile)).toBe(true);
+      descendantPid = Number(fs.readFileSync(pidFile, 'utf8'));
+
+      await manager.shutdown();
+
+      const terminationDeadline = Date.now() + 2000;
+      let alive = true;
+      while (alive && Date.now() < terminationDeadline) {
+        try {
+          process.kill(descendantPid!, 0);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        } catch {
+          alive = false;
+        }
+      }
+      expect(alive).toBe(false);
+    } finally {
+      if (descendantPid) {
+        try {
+          process.kill(descendantPid, 'SIGKILL');
+        } catch {
+          // Shutdown terminated the process tree.
         }
       }
       fs.rmSync(dir, { recursive: true, force: true });

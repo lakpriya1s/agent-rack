@@ -1,4 +1,5 @@
 import { execa, ResultPromise } from 'execa';
+import { execFile } from 'node:child_process';
 import pty from 'node-pty';
 import { AgentAdapter, FormattedResult } from '../adapters/index.js';
 import { EventRingBuffer } from './buffer.js';
@@ -13,12 +14,36 @@ export interface ProcessRunOptions {
   sanitizeEnv?: boolean;
 }
 
+/**
+ * Signals the process group on POSIX so an agent cannot leave spawned descendants behind.
+ * Windows has no process groups, so taskkill's /T option is the equivalent tree operation.
+ */
+function signalProcessTree(pid: number, signal: NodeJS.Signals): void {
+  if (process.platform === 'win32') {
+    const args = ['/PID', String(pid), '/T'];
+    if (signal === 'SIGKILL') args.push('/F');
+    execFile('taskkill', args, () => undefined);
+    return;
+  }
+
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // The process may already have exited.
+    }
+  }
+}
+
 export class AgentProcessController {
   private execaSubprocess?: ResultPromise;
   private ptyProcess?: pty.IPty;
   private buffer = new EventRingBuffer(512);
   private timeoutTimer?: NodeJS.Timeout;
   private killTimer?: NodeJS.Timeout;
+  private cancellationTreePid?: number;
 
   constructor(
     public readonly agentConfig: AgentConfig,
@@ -27,6 +52,13 @@ export class AgentProcessController {
 
   getBuffer(): EventRingBuffer {
     return this.buffer;
+  }
+
+  private finishCancellationTree(): void {
+    if (this.cancellationTreePid === undefined) return;
+    if (this.killTimer) clearTimeout(this.killTimer);
+    signalProcessTree(this.cancellationTreePid, 'SIGKILL');
+    this.cancellationTreePid = undefined;
   }
 
   async runSync(options: ProcessRunOptions): Promise<FormattedResult> {
@@ -62,6 +94,7 @@ export class AgentProcessController {
 
           this.ptyProcess.onExit(({ exitCode }) => {
             if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
+            this.finishCancellationTree();
             if (this.killTimer) clearTimeout(this.killTimer);
             this.ptyProcess = undefined;
             const result = this.adapter.formatResponse(this.buffer.getAll(), exitCode);
@@ -80,6 +113,9 @@ export class AgentProcessController {
             env,
             reject: false,
             stdin: 'ignore',
+            // A detached POSIX child is its own process-group leader, allowing cancellation
+            // to signal every descendant rather than only the agent CLI wrapper.
+            detached: process.platform !== 'win32',
           });
           this.execaSubprocess = subprocess;
 
@@ -96,7 +132,8 @@ export class AgentProcessController {
           subprocess
             .then((result) => {
               if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
-              if (this.killTimer) clearTimeout(this.killTimer);
+              this.finishCancellationTree();
+            if (this.killTimer) clearTimeout(this.killTimer);
               this.execaSubprocess = undefined;
               const exitCode = result.exitCode ?? 0;
               const formattedResult = this.adapter.formatResponse(this.buffer.getAll(), exitCode);
@@ -105,7 +142,8 @@ export class AgentProcessController {
             })
             .catch((err) => {
               if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
-              if (this.killTimer) clearTimeout(this.killTimer);
+              this.finishCancellationTree();
+            if (this.killTimer) clearTimeout(this.killTimer);
               this.execaSubprocess = undefined;
               reject(timeoutError ?? err);
             });
@@ -132,38 +170,22 @@ export class AgentProcessController {
 
     if (this.ptyProcess) {
       const ptyProcess = this.ptyProcess;
-      try {
-        ptyProcess.kill();
-      } catch {
-        // Continue to the forced termination below.
-      }
+      this.cancellationTreePid ??= ptyProcess.pid;
+      signalProcessTree(ptyProcess.pid, 'SIGINT');
       this.killTimer ??= setTimeout(() => {
-        if (this.ptyProcess === ptyProcess) {
-          try {
-            ptyProcess.kill('SIGKILL');
-          } catch {
-            // The process may already have exited.
-          }
-        }
+        signalProcessTree(ptyProcess.pid, 'SIGKILL');
       }, 3000);
     }
 
     if (this.execaSubprocess) {
       const subprocess = this.execaSubprocess;
-      try {
-        subprocess.kill('SIGINT');
-      } catch {
-        // Continue to the forced termination below.
+      if (subprocess.pid !== undefined) {
+        this.cancellationTreePid ??= subprocess.pid;
+        signalProcessTree(subprocess.pid, 'SIGINT');
+        this.killTimer ??= setTimeout(() => {
+          signalProcessTree(subprocess.pid!, 'SIGKILL');
+        }, 3000);
       }
-      this.killTimer ??= setTimeout(() => {
-        if (this.execaSubprocess === subprocess) {
-          try {
-            subprocess.kill('SIGKILL');
-          } catch {
-            // The process may already have exited.
-          }
-        }
-      }, 3000);
     }
   }
 }

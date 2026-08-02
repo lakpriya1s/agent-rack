@@ -71,31 +71,38 @@ describe('ensureClaudeDashboardRegistration', () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
-  it('refuses to destructively replace a mismatched existing registration', async () => {
-    const run = fakeRunner([{ stdout: localSse.replace('8987', '9999') }]);
-    const confirm = vi.fn();
+  it('migrates a mismatched stdio registration to SSE after explicit confirmation', async () => {
+    const stdio = `agent-rack:\n  Scope: Local config (private to you in this project)\n  Type: stdio\n  Command: npx\n  Args: -y agent-rack start\n`;
+    const run = fakeRunner([{ stdout: stdio }, {}, {}]);
+
     const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
       run,
-      confirm,
+      confirm: async () => true,
     });
-    expect(result.warning).toContain('left unchanged');
-    expect(result.warning).toContain('claude mcp remove agent-rack --scope local');
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(confirm).not.toHaveBeenCalled();
+
+    expect(result.notice).toContain('now points to this shared dashboard server');
+    expect(run).toHaveBeenNthCalledWith(2, 'claude', [
+      'mcp', 'remove', 'agent-rack', '--scope', 'local',
+    ]);
+    expect(run).toHaveBeenNthCalledWith(3, 'claude', [
+      'mcp', 'add', '--transport', 'sse', '--scope', 'local', 'agent-rack', 'http://127.0.0.1:8987/sse',
+    ]);
   });
 
-  it('preserves the detected scope in safe manual replacement guidance', async () => {
-    const project = localSse
-      .replace('Local config (private to you in this project)', 'Project config (shared with your team)')
-      .replace('8987', '9999');
-    const run = fakeRunner([{ stdout: project }]);
+  it('restores a mismatched stdio registration if its SSE migration add fails', async () => {
+    const stdio = `agent-rack:\n  Scope: Project config (shared with your team)\n  Type: stdio\n  Command: npx\n  Args: -y agent-rack start\n`;
+    const run = fakeRunner([{ stdout: stdio }, {}, { exitCode: 1, stderr: 'add failed' }, {}]);
+
     const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
       run,
-      confirm: vi.fn(),
+      confirm: async () => true,
     });
 
-    expect(run).toHaveBeenCalledOnce();
-    expect(result.warning).toContain('claude mcp remove agent-rack --scope project');
+    expect(result.warning).toContain('add failed');
+    expect(result.warning).toContain('restored');
+    expect(run).toHaveBeenNthCalledWith(4, 'claude', [
+      'mcp', 'add', '--transport', 'stdio', '--scope', 'project', 'agent-rack', 'npx', '-y', 'agent-rack', 'start',
+    ]);
   });
 
   it('opens with a warning when adding a missing registration is declined', async () => {

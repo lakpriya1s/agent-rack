@@ -8,6 +8,7 @@ function connection(overrides: Partial<DashboardConnection> = {}): DashboardConn
     url: 'http://127.0.0.1:8987/sse',
     mode: 'auto-started',
     configAuthority: 'local',
+    launchMetadata: { agents: ['claude'], allowedWorkspaces: ['/tmp/dashboard-startup-test'] },
     client: {} as DashboardConnection['client'],
     close: vi.fn(async () => undefined),
     ...overrides,
@@ -111,6 +112,24 @@ describe('startDashboard orchestration', () => {
 
     await startDashboard(undefined, undefined, deps);
     expect(renderDashboard).toHaveBeenCalledOnce();
+    expect(shared.close).toHaveBeenCalledOnce();
+  });
+
+  it('treats Claude setup cancellation as dashboard command cancellation and cleans up', async () => {
+    const shared = connection();
+    const renderDashboard = vi.fn();
+    const abort = Object.assign(new Error('interrupted'), { name: 'AbortError' });
+    const deps = dependencies({
+      coordinate: async () => shared,
+      setupClaude: async () => {
+        throw abort;
+      },
+      renderDashboard,
+    });
+
+    await startDashboard(undefined, undefined, deps);
+
+    expect(renderDashboard).not.toHaveBeenCalled();
     expect(shared.close).toHaveBeenCalledOnce();
   });
 

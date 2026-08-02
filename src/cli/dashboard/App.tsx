@@ -3,7 +3,7 @@ import { Box, Text, useInput, useApp } from 'ink';
 import { AgentMCPConfig } from '../../config/schema.js';
 import { AgentSessionInfo } from '../../engine/session.js';
 import { ParsedAgentEvent } from '../../adapters/base.js';
-import { DashboardRemoteClient } from './remoteClient.js';
+import { DashboardRemoteClient, type DashboardLaunchMetadata } from './remoteClient.js';
 import { Header } from './Header.js';
 import { Footer } from './Footer.js';
 import { SessionsView } from './SessionsView.js';
@@ -24,6 +24,7 @@ interface AppProps {
   remoteClient: DashboardRemoteClient;
   serverMode: DashboardServerMode;
   configAuthority: 'local' | 'external';
+  launchMetadata: DashboardLaunchMetadata;
   startupMessage?: string;
 }
 
@@ -96,6 +97,7 @@ export const DashboardApp: React.FC<AppProps> = ({
   remoteClient,
   serverMode,
   configAuthority,
+  launchMetadata,
   startupMessage,
 }) => {
   const { exit } = useApp();
@@ -108,11 +110,15 @@ export const DashboardApp: React.FC<AppProps> = ({
   const [activeTab, setActiveTab] = useState<'sessions' | 'launcher' | 'system' | 'reviews'>('sessions');
   const [statusMessage, setStatusMessage] = useState<string | undefined>(startupMessage);
   const [exitArmed, setExitArmed] = useState(false);
+  const exitArmedRef = useRef(false);
   const quitInFlight = useRef(false);
+  const queuedQuit = useRef(false);
+  const exitVerificationFailed = useRef(false);
   const [showSendInputModal, setShowSendInputModal] = useState(false);
   const [connectionLost, setConnectionLost] = useState(false);
 
-  const availableAgents = Object.keys(config.agents);
+  const availableAgents = launchMetadata.agents;
+  const availableWorkspaces = launchMetadata.allowedWorkspaces;
 
   useEffect(() => {
     let cancelled = false;
@@ -178,19 +184,36 @@ export const DashboardApp: React.FC<AppProps> = ({
   const activeSessionsCount = sessions.filter((s) => s.status === 'running').length;
   const configAuthorityWarning = dashboardConfigAuthorityWarning(configAuthority);
 
+  const setExitArm = (armed: boolean) => {
+    exitArmedRef.current = armed;
+    setExitArmed(armed);
+  };
+
   const requestExit = async () => {
-    if (quitInFlight.current) return;
+    if (quitInFlight.current) {
+      // Do not discard an intentional second q/Ctrl+C while the authoritative check is pending.
+      queuedQuit.current = true;
+      return;
+    }
     quitInFlight.current = true;
     try {
+      // If the last authoritative check could not reach our owned server, a second deliberate
+      // quit must still reach startDashboard's finally block, which closes that server locally.
+      if (serverMode === 'auto-started' && exitArmedRef.current && exitVerificationFailed.current) {
+        exit();
+        return;
+      }
+
       const decision = await decideDashboardExitFromServer(
         serverMode,
-        exitArmed,
+        exitArmedRef.current,
         () => remoteClient.listSessions()
       );
+      exitVerificationFailed.current = false;
       if (decision.action === 'exit') {
         exit();
       } else if (decision.action === 'warn') {
-        setExitArmed(true);
+        setExitArm(true);
         setStatusMessage(
           `${decision.runningCount} session${decision.runningCount === 1 ? '' : 's'} still running. Press q again to cancel and close the auto-started server.`
         );
@@ -202,10 +225,15 @@ export const DashboardApp: React.FC<AppProps> = ({
       }
     } catch (error) {
       const failure = dashboardExitVerificationFailure(error);
-      setExitArmed(failure.exitArmed);
+      exitVerificationFailed.current = true;
+      setExitArm(failure.exitArmed);
       setStatusMessage(failure.statusMessage);
     } finally {
       quitInFlight.current = false;
+      if (queuedQuit.current) {
+        queuedQuit.current = false;
+        void requestExit();
+      }
     }
   };
 
@@ -220,7 +248,10 @@ export const DashboardApp: React.FC<AppProps> = ({
       return;
     }
 
-    if (exitArmed) setExitArmed(false);
+    if (exitArmed) {
+      exitVerificationFailed.current = false;
+      setExitArm(false);
+    }
 
     if (input === '1') {
       setActiveTab('sessions');
@@ -315,7 +346,7 @@ export const DashboardApp: React.FC<AppProps> = ({
       {activeTab === 'launcher' ? (
         <LauncherModal
           availableAgents={availableAgents}
-          workspaces={config.allowedWorkspaces}
+          workspaces={availableWorkspaces}
           onLaunch={handleLaunch}
           onCancel={() => setActiveTab('sessions')}
         />

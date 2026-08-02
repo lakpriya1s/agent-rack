@@ -1,9 +1,6 @@
 import { AgentMCPConfig } from '../config/schema.js';
 import { SessionManager } from '../engine/session.js';
 import { SessionKind } from '../engine/session.js';
-import { validateWorkspacePath } from '../security/workspace.js';
-import { createAdapter } from '../adapters/index.js';
-import { AgentProcessController } from '../engine/process.js';
 import { listAgentAvailability } from '../engine/availability.js';
 import { fingerprintAgentMCPConfig } from '../config/fingerprint.js';
 import { applyModelOverride, requireAgentConfig, resolveModel, resolveTimeoutSeconds, resolveWorkspace } from './args.js';
@@ -88,18 +85,11 @@ export function registerUnifiedTools(
       const baseAgentConfig = requireAgentConfig(config, agentId);
       const agentConfig = applyModelOverride(baseAgentConfig, resolveModel(args, baseAgentConfig));
 
-      validateWorkspacePath(workspace, config.allowedWorkspaces);
-
-      const adapter = createAdapter(agentConfig);
-      const controller = new AgentProcessController(agentConfig, adapter);
-
-      const result = await controller.runSync({
-        prompt,
-        workspace,
-        mode,
+      const session = sessionManager.createSession(agentId, prompt, workspace, mode, {
         timeoutSeconds,
-        sanitizeEnv: config.security.sanitizeEnv,
+        agentConfigOverride: agentConfig,
       });
+      const result = await sessionManager.waitForSession(session.id);
 
       return {
         content: [
@@ -349,6 +339,12 @@ export function registerUnifiedTools(
             server: 'agent-rack',
             identityVersion: 1,
             configFingerprint: fingerprintAgentMCPConfig(config),
+            // Deliberately exclude command args and env: a remote dashboard needs only the
+            // choices the server will accept, never local execution details or secrets.
+            launchMetadata: {
+              agents: Object.keys(config.agents),
+              allowedWorkspaces: config.allowedWorkspaces,
+            },
           }),
         },
       ],

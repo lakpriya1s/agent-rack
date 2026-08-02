@@ -10,7 +10,7 @@ import {
   formatDashboardListenFailure,
   resolveDashboardServerUrl,
 } from './connection.js';
-import { DashboardRemoteClient } from './remoteClient.js';
+import { DashboardRemoteClient, type DashboardLaunchMetadata } from './remoteClient.js';
 
 export type DashboardServerMode = 'auto-started' | 'existing';
 
@@ -18,6 +18,7 @@ export interface DashboardConnection {
   url: string;
   mode: DashboardServerMode;
   configAuthority: 'local' | 'external';
+  launchMetadata: DashboardLaunchMetadata;
   client: DashboardRemoteClient;
   close(): Promise<void>;
 }
@@ -44,6 +45,7 @@ async function connectClient(
 ): Promise<{
   client: DashboardRemoteClient;
   configFingerprint: string;
+  launchMetadata: DashboardLaunchMetadata;
 }> {
   const client = createClient(url);
   let timeout: NodeJS.Timeout | undefined;
@@ -55,7 +57,11 @@ async function connectClient(
         mcpConnected = true;
         const validatedIdentity = await client.validateDashboardServer();
         await client.listSessions();
-        return validatedIdentity;
+        return {
+          client,
+          configFingerprint: validatedIdentity.configFingerprint,
+          launchMetadata: validatedIdentity.launchMetadata,
+        };
       })(),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(
@@ -64,7 +70,7 @@ async function connectClient(
         );
       }),
     ]);
-    return { client, configFingerprint: identity.configFingerprint };
+    return identity;
   } catch (error) {
     await client.close().catch(() => undefined);
     if (mcpConnected) {
@@ -88,15 +94,17 @@ export async function coordinateDashboardServer(
 
   if (connectUrl) {
     try {
-      const { client } = await connectClient(
+      const connected = await connectClient(
         resolution.url,
         deps.createClient,
         deps.probeTimeoutMs
       );
+      const { client } = connected;
       return {
         url: resolution.url,
         mode: 'existing',
         configAuthority: 'external',
+        launchMetadata: connected.launchMetadata,
         client,
         close: () => client.close(),
       };
@@ -122,6 +130,7 @@ export async function coordinateDashboardServer(
       url: resolution.url,
       mode: 'existing',
       configAuthority: 'local',
+      launchMetadata: connected.launchMetadata,
       client: connected.client,
       close: () => connected.client.close(),
     };
@@ -143,6 +152,7 @@ export async function coordinateDashboardServer(
   }
 
   let client: DashboardRemoteClient | undefined;
+  let launchMetadata: DashboardLaunchMetadata | undefined;
   try {
     const connected = await connectClient(
       ownedServer.url,
@@ -153,6 +163,7 @@ export async function coordinateDashboardServer(
       throw new Error('Auto-started server returned an unexpected configuration identity.');
     }
     client = connected.client;
+    launchMetadata = connected.launchMetadata;
   } catch (error) {
     await ownedServer.close().catch(() => undefined);
     throw new Error(`The auto-started dashboard server could not be reached: ${error instanceof Error ? error.message : String(error)}`);
@@ -163,7 +174,8 @@ export async function coordinateDashboardServer(
     url: ownedServer.url,
     mode: 'auto-started',
     configAuthority: 'local',
-    client,
+    launchMetadata: launchMetadata!,
+    client: client!,
     close: () => {
       closePromise ??= (async () => {
         await client.close().catch(() => undefined);

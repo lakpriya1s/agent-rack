@@ -8,6 +8,8 @@ export interface ClaudeRegistration {
   scope: ClaudeScope;
   type?: string;
   url?: string;
+  command?: string;
+  args?: string[];
 }
 
 export interface ClaudeCommandResult {
@@ -40,6 +42,10 @@ export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistrati
       scopeValue === 'project' || scopeValue === 'user' ? scopeValue : 'local';
     const type = typeof parsed.type === 'string' ? parsed.type.toLowerCase() : undefined;
     const url = typeof parsed.url === 'string' ? parsed.url : undefined;
+    const command = typeof parsed.command === 'string' ? parsed.command : undefined;
+    const args = Array.isArray(parsed.args) && parsed.args.every((arg) => typeof arg === 'string')
+      ? parsed.args
+      : undefined;
     const identifiesAgentRack =
       parsed.name === 'agent-rack' || 'scope' in parsed || 'type' in parsed || 'url' in parsed;
     if (identifiesAgentRack) {
@@ -48,6 +54,8 @@ export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistrati
         scope,
         ...(type ? { type } : {}),
         ...(url ? { url } : {}),
+        ...(command ? { command } : {}),
+        ...(args ? { args } : {}),
       };
     }
   } catch {
@@ -64,6 +72,14 @@ export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistrati
     scopeLabel === 'project' || scopeLabel === 'user' ? scopeLabel : 'local';
   const type = output.match(/^\s*Type:\s*(\S+)/im)?.[1]?.toLowerCase();
   const url = output.match(/^\s*(?:URL|Url):\s*(\S+)/im)?.[1];
+  const command = output.match(/^\s*Command:\s*(\S+)/im)?.[1];
+  const argsText = output.match(/^\s*Args:\s*(.*)$/im)?.[1];
+  const args = argsText
+    ? Array.from(argsText.matchAll(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)).map((match) => {
+        const token = match[0];
+        return /^['"].*['"]$/.test(token) ? token.slice(1, -1) : token;
+      })
+    : undefined;
   const exists = /^\s*agent-rack:\s*$/im.test(output) || Boolean(scopeLabel || type || url);
 
   return {
@@ -71,6 +87,8 @@ export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistrati
     scope,
     ...(type ? { type } : {}),
     ...(url ? { url } : {}),
+    ...(command ? { command } : {}),
+    ...(args ? { args } : {}),
   };
 }
 
@@ -105,6 +123,15 @@ function sameUrl(left: string | undefined, right: string): boolean {
   } catch {
     return left === right;
   }
+}
+
+function restoreRegistrationArgs(registration: ClaudeRegistration): string[] | undefined {
+  const prefix = ['mcp', 'add', '--transport', registration.type ?? '', '--scope', registration.scope, 'agent-rack'];
+  if (registration.type === 'sse' && registration.url) return [...prefix, registration.url];
+  if (registration.type === 'stdio' && registration.command) {
+    return [...prefix, registration.command, ...(registration.args ?? [])];
+  }
+  return undefined;
 }
 
 export async function ensureClaudeDashboardRegistration(
@@ -150,21 +177,34 @@ export async function ensureClaudeDashboardRegistration(
     return {};
   }
 
-  if (registration.exists) {
+  const restoreArgs = registration.exists ? restoreRegistrationArgs(registration) : undefined;
+  if (registration.exists && !restoreArgs) {
     return {
-      warning: `Claude Code's existing agent-rack registration was left unchanged because it cannot be restored losslessly. Remove it manually with "claude mcp remove agent-rack --scope ${registration.scope}" only when ready to replace it, then rerun the dashboard.`,
+      warning: `Claude Code's existing agent-rack registration was left unchanged because it cannot be restored safely. Remove it manually with "claude mcp remove agent-rack --scope ${registration.scope}" only when ready to replace it, then rerun the dashboard.`,
     };
   }
 
   const approved = await deps.confirm(
     deps.externalConnection
-      ? `This --connect server's agents, workspaces, and security settings are external and authoritative. Connect Claude Code's agent-rack MCP registration to ${url}?`
-      : `Connect Claude Code's agent-rack MCP registration to the shared dashboard at ${url}?`
+      ? `This --connect server's agents, workspaces, and security settings are external and authoritative. ${registration.exists ? 'Replace the existing registration' : 'Connect Claude Code'} to ${url}?`
+      : `${registration.exists ? 'Replace Claude Code\'s existing agent-rack registration' : 'Connect Claude Code\'s agent-rack MCP registration'} to the shared dashboard at ${url}?`
   );
   if (!approved) {
     return {
       warning: 'Claude Code MCP setup was not changed. The dashboard will open, but Claude sessions may not appear here.',
     };
+  }
+
+  if (registration.exists) {
+    let removed: ClaudeCommandResult;
+    try {
+      removed = await deps.run('claude', ['mcp', 'remove', 'agent-rack', '--scope', registration.scope]);
+    } catch (error) {
+      return {
+        warning: `Claude Code MCP setup could not remove the previous registration: ${error instanceof Error ? error.message : String(error)}. The dashboard will still open.`,
+      };
+    }
+    if (removed.exitCode !== 0) return commandFailure('remove the previous registration', removed);
   }
 
   let added: ClaudeCommandResult;
@@ -180,11 +220,22 @@ export async function ensureClaudeDashboardRegistration(
       url,
     ]);
   } catch (error) {
+    if (restoreArgs) await deps.run('claude', restoreArgs).catch(() => undefined);
     return {
-      warning: `Claude Code MCP setup could not add the shared registration: ${error instanceof Error ? error.message : String(error)}. The dashboard will still open.`,
+      warning: `Claude Code MCP setup could not add the shared registration: ${error instanceof Error ? error.message : String(error)}. ${restoreArgs ? 'The previous registration was restored.' : ''} The dashboard will still open.`,
     };
   }
-  if (added.exitCode !== 0) return commandFailure('add the shared registration', added);
+  if (added.exitCode !== 0) {
+    if (restoreArgs) {
+      const restored = await deps.run('claude', restoreArgs).catch(() => undefined);
+      const detail = added.stderr.trim() || added.stdout.trim() || `exit code ${added.exitCode}`;
+      if (restored?.exitCode === 0) {
+        return { warning: `Claude Code MCP setup could not add the shared registration: ${detail}. The previous registration was restored. The dashboard will still open.` };
+      }
+      return { warning: `Claude Code MCP setup could not add the shared registration: ${detail}. The previous registration could not be restored. The dashboard will still open.` };
+    }
+    return commandFailure('add the shared registration', added);
+  }
 
   return {
     notice: 'Claude Code now points to this shared dashboard server. Restart or reconnect Claude Code once to apply it.',

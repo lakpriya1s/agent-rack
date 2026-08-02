@@ -136,6 +136,18 @@ export class SessionManager {
     return this.sessions.get(sessionId);
   }
 
+  /** Awaits a tracked session, including foreground callers that need its final result. */
+  async waitForSession(sessionId: string): Promise<FormattedResult> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found.`);
+    }
+
+    await this.runPromises.get(sessionId);
+    if (session.result) return session.result;
+    throw new Error(session.error ?? `Session '${sessionId}' completed without a result.`);
+  }
+
   listSessions(): AgentSession[] {
     return Array.from(this.sessions.values()).sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()

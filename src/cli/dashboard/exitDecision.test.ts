@@ -42,13 +42,13 @@ describe('decideDashboardExit', () => {
     ).resolves.toEqual({ action: 'cancel-and-exit', sessionIds: ['just-started'] });
   });
 
-  it('keeps exit unarmed after verification fails so a successful retry still warns first', async () => {
+  it('arms a deliberate second quit when verification fails so an owned server can still close', async () => {
     const failure = dashboardExitVerificationFailure(new Error('connection lost'));
-    expect(failure.exitArmed).toBe(false);
-    expect(failure.statusMessage).toContain('Press q to retry');
+    expect(failure.exitArmed).toBe(true);
+    expect(failure.statusMessage).toContain('Press q again to close');
 
     await expect(
-      decideDashboardExitFromServer('auto-started', failure.exitArmed, async () => [
+      decideDashboardExitFromServer('auto-started', false, async () => [
         { sessionId: 'still-running', status: 'running' },
       ])
     ).resolves.toEqual({ action: 'warn', runningCount: 1 });

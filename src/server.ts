@@ -27,6 +27,9 @@ export interface AgentMCPHTTPServer {
   close(): Promise<void>;
 }
 
+/** A backwards-compatible HTTP server whose close callback also shuts down tracked sessions. */
+export type ManagedAgentMCPServer = http.Server & { shutdown(): Promise<void> };
+
 /** Builds the shared context from a config that has already been loaded and validated. */
 export function createServerContextFromConfig(
   config: AgentMCPConfig,
@@ -159,6 +162,7 @@ export async function startSSEServer(
   });
 
   const server = http.createServer(app);
+  const closeHTTPServer = server.close.bind(server);
   const sockets = new Set<Socket>();
   server.on('connection', (socket) => {
     sockets.add(socket);
@@ -190,7 +194,7 @@ export async function startSSEServer(
       mcpServers.clear();
 
       const closed = new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
+        closeHTTPServer((error) => (error ? reject(error) : resolve()));
       });
       for (const socket of sockets) socket.destroy();
       server.closeAllConnections();
@@ -202,9 +206,22 @@ export async function startSSEServer(
   return { server, url: `http://127.0.0.1:${boundPort}/sse`, close };
 }
 
+function withLifecycleClose(handle: AgentMCPHTTPServer): ManagedAgentMCPServer {
+  const server = handle.server as ManagedAgentMCPServer;
+  server.close = ((callback?: (error?: Error) => void) => {
+    void handle.close().then(
+      () => callback?.(),
+      (error) => callback?.(error instanceof Error ? error : new Error(String(error)))
+    );
+    return server;
+  }) as typeof server.close;
+  server.shutdown = handle.close;
+  return server;
+}
+
 export async function startAgentMCPServer(
   options: { configPath?: string; transport?: 'stdio' | 'sse'; port?: number } = {}
-): Promise<http.Server | undefined> {
+): Promise<ManagedAgentMCPServer | undefined> {
   const ctx = await createServerContext(options.configPath);
   const targetTransport = options.transport || ctx.config.transport || 'stdio';
   const targetPort = options.port ?? ctx.config.port ?? DEFAULT_SSE_PORT;
@@ -222,7 +239,7 @@ export async function startAgentMCPServer(
   if (targetTransport === 'sse') {
     const handle = await startSSEServer(ctx, targetPort);
     console.error(`Agent-MCP Server running on HTTP-SSE: ${handle.url}`);
-    return handle.server;
+    return withLifecycleClose(handle);
   } else {
     const server = buildServer(ctx);
     const transport = new StdioServerTransport();

@@ -113,6 +113,10 @@ describe('coordinateDashboardServer', () => {
     const connection = await coordinateDashboardServer(localConfig, existing.url);
     expect(connection.mode).toBe('existing');
     expect(connection.configAuthority).toBe('external');
+    expect(connection.launchMetadata).toEqual({
+      agents: Object.keys(serverConfig.agents),
+      allowedWorkspaces: serverConfig.allowedWorkspaces,
+    });
     await connection.close();
   });
 

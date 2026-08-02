@@ -59,6 +59,10 @@ describe('DashboardRemoteClient', () => {
         server: 'agent-rack',
         identityVersion: 1,
         configFingerprint: fingerprintAgentMCPConfig(loadConfig(configPath).config),
+        launchMetadata: {
+          agents: ['echoer'],
+          allowedWorkspaces: [dir],
+        },
       });
 
       const created = await client.createSession('echoer', 'hello', dir, 'task');

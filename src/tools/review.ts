@@ -1,8 +1,6 @@
 import { AgentMCPConfig } from '../config/schema.js';
 import { SessionManager } from '../engine/session.js';
 import { validateWorkspacePath } from '../security/workspace.js';
-import { createAdapter } from '../adapters/index.js';
-import { AgentProcessController } from '../engine/process.js';
 import { MCPToolDefinition } from './unified.js';
 import {
   applyModelOverride,
@@ -93,7 +91,6 @@ export function registerReviewTools(
       const agentConfig = requireAgentConfig(config, agentId);
 
       validateWorkspacePath(workspace, config.allowedWorkspaces);
-
       const hasChanges = await hasChangesToReview({ workspace, scope, baseRef });
       if (!hasChanges) {
         const emptyResult: ReviewOutput = {
@@ -135,16 +132,12 @@ export function registerReviewTools(
         };
       }
 
-      const adapter = createAdapter(effectiveAgentConfig);
-      const controller = new AgentProcessController(effectiveAgentConfig, adapter);
-
-      const result = await controller.runSync({
-        prompt,
-        workspace,
-        mode: readOnlyMode,
+      const session = sessionManager.createSession(agentId, prompt, workspace, readOnlyMode, {
+        kind: 'review',
         timeoutSeconds,
-        sanitizeEnv: config.security.sanitizeEnv,
+        agentConfigOverride: effectiveAgentConfig,
       });
+      const result = await sessionManager.waitForSession(session.id);
 
       return {
         content: [{ type: 'text', text: JSON.stringify(reviewFromResult(result), null, 2) }],

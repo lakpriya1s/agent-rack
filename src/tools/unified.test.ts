@@ -40,6 +40,8 @@ describe('agent_run tool', () => {
       });
 
       expect((response.content as any)[0].text).toContain('--model gpt-5.5');
+      expect(sessionManager.listSessions()).toHaveLength(1);
+      expect(sessionManager.listSessions()[0].status).toBe('completed');
       // The configured agent entry itself must not be mutated.
       expect(config.agents['echoer'].args).not.toContain('--model');
     } finally {
@@ -128,6 +130,10 @@ describe('agent_server_identity tool', () => {
       server: 'agent-rack',
       identityVersion: 1,
       configFingerprint: fingerprintAgentMCPConfig(config),
+      launchMetadata: {
+        agents: Object.keys(config.agents),
+        allowedWorkspaces: config.allowedWorkspaces,
+      },
     });
   });
 });

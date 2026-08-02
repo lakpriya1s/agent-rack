@@ -81,6 +81,23 @@ describe('loaded-config SSE server API', () => {
     );
   });
 
+  it('makes startAgentMCPServer return a server with lifecycle-aware shutdown', async () => {
+    const started = await startAgentMCPServer({ transport: 'sse', port: 0 });
+    expect(started).toBeDefined();
+    const port = (started!.address() as AddressInfo).port;
+
+    await started!.shutdown();
+
+    const rebound = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      rebound.once('error', reject);
+      rebound.listen(port, '127.0.0.1', resolve);
+    });
+    await new Promise<void>((resolve, reject) =>
+      rebound.close((error) => (error ? reject(error) : resolve()))
+    );
+  });
+
   it('shuts down running agent children before owned HTTP close completes', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-rack-owned-close-'));
     const pidFile = path.join(dir, 'child.pid');
