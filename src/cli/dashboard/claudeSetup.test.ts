@@ -71,32 +71,58 @@ describe('ensureClaudeDashboardRegistration', () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
-  it('opens with a warning when setup is declined', async () => {
+  it('refuses to destructively replace a mismatched existing registration', async () => {
     const run = fakeRunner([{ stdout: localSse.replace('8987', '9999') }]);
+    const confirm = vi.fn();
+    const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
+      run,
+      confirm,
+    });
+    expect(result.warning).toContain('left unchanged');
+    expect(result.warning).toContain('claude mcp remove agent-rack --scope local');
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('preserves the detected scope in safe manual replacement guidance', async () => {
+    const project = localSse
+      .replace('Local config (private to you in this project)', 'Project config (shared with your team)')
+      .replace('8987', '9999');
+    const run = fakeRunner([{ stdout: project }]);
+    const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
+      run,
+      confirm: vi.fn(),
+    });
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(result.warning).toContain('claude mcp remove agent-rack --scope project');
+  });
+
+  it('opens with a warning when adding a missing registration is declined', async () => {
+    const run = fakeRunner([
+      { stderr: 'No MCP server named "agent-rack".', exitCode: 1 },
+    ]);
     const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
       run,
       confirm: async () => false,
     });
     expect(result.warning).toContain('not changed');
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledOnce();
   });
 
-  it('preserves effective scope and uses exact argv arrays to remove and add', async () => {
-    const project = localSse
-      .replace('Local config (private to you in this project)', 'Project config (shared with your team)')
-      .replace('8987', '9999');
-    const run = fakeRunner([{ stdout: project }, {}, {}]);
-    const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
+  it('warns about external authority before offering to register --connect', async () => {
+    const run = fakeRunner([
+      { stderr: 'No MCP server named "agent-rack".', exitCode: 1 },
+    ]);
+    const confirm = vi.fn(async () => false);
+
+    await ensureClaudeDashboardRegistration('http://127.0.0.1:9999/sse', {
       run,
-      confirm: async () => true,
+      confirm,
+      externalConnection: true,
     });
 
-    expect(run.mock.calls).toEqual([
-      ['claude', ['mcp', 'get', 'agent-rack']],
-      ['claude', ['mcp', 'remove', 'agent-rack', '--scope', 'project']],
-      ['claude', ['mcp', 'add', '--transport', 'sse', '--scope', 'project', 'agent-rack', 'http://127.0.0.1:8987/sse']],
-    ]);
-    expect(result.notice).toContain('Restart or reconnect Claude Code once');
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/external and authoritative/i));
   });
 
   it('adds a missing registration at local scope', async () => {
@@ -121,9 +147,12 @@ describe('ensureClaudeDashboardRegistration', () => {
     expect(missing.warning).toContain('Claude Code CLI was not found');
 
     const failure = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
-      run: fakeRunner([{ stdout: localSse.replace('8987', '9999') }, { exitCode: 1, stderr: 'remove failed' }]),
+      run: fakeRunner([
+        { stderr: 'No MCP server named "agent-rack".', exitCode: 1 },
+        { exitCode: 1, stderr: 'add failed' },
+      ]),
       confirm: async () => true,
     });
-    expect(failure.warning).toContain('remove failed');
+    expect(failure.warning).toContain('add failed');
   });
 });

@@ -81,6 +81,48 @@ describe('loaded-config SSE server API', () => {
     );
   });
 
+  it('shuts down running agent children before owned HTTP close completes', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-rack-owned-close-'));
+    const pidFile = path.join(dir, 'child.pid');
+    const config = getDefaultConfig(dir);
+    config.agents['long_running'] = {
+      name: 'Long Running',
+      command: 'node',
+      args: [
+        '-e',
+        `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`,
+      ],
+      transport: 'claude_stream_json',
+      env: {},
+    };
+    const context = createServerContextFromConfig(config);
+    const handle = await startSSEServer(context, 0);
+    let childPid: number | undefined;
+
+    try {
+      context.sessionManager.createSession('long_running', 'wait', dir);
+      const deadline = Date.now() + 2000;
+      while (!fs.existsSync(pidFile) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(fs.existsSync(pidFile)).toBe(true);
+      childPid = Number(fs.readFileSync(pidFile, 'utf8'));
+
+      await handle.close();
+      expect(() => process.kill(childPid!, 0)).toThrow();
+    } finally {
+      await handle.close().catch(() => undefined);
+      if (childPid) {
+        try {
+          process.kill(childPid, 'SIGKILL');
+        } catch {
+          // Already terminated as expected.
+        }
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects promptly when the requested port cannot be listened on', async () => {
     const occupied = net.createServer();
     await new Promise<void>((resolve, reject) => {

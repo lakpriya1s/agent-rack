@@ -48,6 +48,7 @@ describe('coordinateDashboardServer', () => {
 
     expect(receivedConfig).toBe(config);
     expect(connection.mode).toBe('auto-started');
+    expect(connection.configAuthority).toBe('local');
     expect(await connection.client.listSessions()).toEqual([]);
     const port = new URL(connection.url).port;
 
@@ -70,6 +71,7 @@ describe('coordinateDashboardServer', () => {
 
     const connection = await coordinateDashboardServer(config);
     expect(connection.mode).toBe('existing');
+    expect(connection.configAuthority).toBe('local');
     await connection.close();
 
     const verifier = new DashboardRemoteClient(existing.url);
@@ -79,6 +81,39 @@ describe('coordinateDashboardServer', () => {
     } finally {
       await verifier.close();
     }
+  });
+
+  it('rejects an implicit existing server with a different effective config', async () => {
+    const serverConfig = getDefaultConfig('/tmp/project-a');
+    const existing = await startSSEServer(createServerContextFromConfig(serverConfig), 0);
+    ownedHandles.push(existing);
+
+    const localConfig = getDefaultConfig('/tmp/project-b');
+    localConfig.port = Number(new URL(existing.url).port);
+
+    await expect(coordinateDashboardServer(localConfig)).rejects.toThrow(
+      /different agent-rack configuration/
+    );
+
+    const verifier = new DashboardRemoteClient(existing.url);
+    try {
+      await verifier.connect();
+      expect(await verifier.listSessions()).toEqual([]);
+    } finally {
+      await verifier.close();
+    }
+  });
+
+  it('allows an explicit --connect to a distinct config but marks it external', async () => {
+    const serverConfig = getDefaultConfig('/tmp/project-a');
+    const existing = await startSSEServer(createServerContextFromConfig(serverConfig), 0);
+    ownedHandles.push(existing);
+    const localConfig = getDefaultConfig('/tmp/project-b');
+
+    const connection = await coordinateDashboardServer(localConfig, existing.url);
+    expect(connection.mode).toBe('existing');
+    expect(connection.configAuthority).toBe('external');
+    await connection.close();
   });
 
   it('never auto-starts for an explicit --connect URL', async () => {

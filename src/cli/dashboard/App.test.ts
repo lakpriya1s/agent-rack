@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentSessionInfo } from '../../engine/session.js';
 import {
+  dashboardConfigAuthorityWarning,
   moveSessionSelection,
   prependLaunchedSession,
   refreshSessionList,
+  shouldRequestDashboardExit,
   type DashboardSessionListState,
 } from './App.js';
 
@@ -46,6 +48,18 @@ describe('dashboard session selection', () => {
 
     expect(launched.sessions.map((item) => item.sessionId)).toEqual(['launched', 'existing']);
     expect(launched.selectedSessionId).toBe('launched');
+  });
+
+  it('labels explicit external configuration as authoritative', () => {
+    expect(dashboardConfigAuthorityWarning('external')).toContain('EXTERNAL CONFIG');
+    expect(dashboardConfigAuthorityWarning('external')).toContain('workspaces');
+    expect(dashboardConfigAuthorityWarning('local')).toBeUndefined();
+  });
+
+  it('handles Ctrl+C through the exit guard even while a modal is open', () => {
+    expect(shouldRequestDashboardExit('c', true, true)).toBe(true);
+    expect(shouldRequestDashboardExit('q', false, true)).toBe(false);
+    expect(shouldRequestDashboardExit('q', false, false)).toBe(true);
   });
 
   it('moves keyboard selection by id and wraps at both ends', () => {

@@ -3,6 +3,22 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import type { ParsedAgentEvent } from '../../adapters/base.js';
 import type { AgentSessionInfo, SessionKind } from '../../engine/session.js';
 
+export interface DashboardServerIdentity {
+  server: 'agent-rack';
+  identityVersion: 1;
+  configFingerprint: string;
+}
+
+const REQUIRED_DASHBOARD_TOOLS = [
+  'agent_server_identity',
+  'agent_session_list',
+  'agent_session_status',
+  'agent_session_logs',
+  'agent_session_send',
+  'agent_session_cancel',
+  'agent_session_create',
+] as const;
+
 /** Thin MCP client wrapper the dashboard uses instead of owning a local SessionManager. */
 export class DashboardRemoteClient {
   private readonly client: Client;
@@ -51,6 +67,28 @@ export class DashboardRemoteClient {
       throw new Error(content.text);
     }
     return content.text;
+  }
+
+  async validateDashboardServer(): Promise<DashboardServerIdentity> {
+    const { tools } = await this.client.listTools();
+    const available = new Set(tools.map((tool) => tool.name));
+    const missing = REQUIRED_DASHBOARD_TOOLS.filter((tool) => !available.has(tool));
+    if (missing.length > 0) {
+      throw new Error(`Server is missing required dashboard tools: ${missing.join(', ')}`);
+    }
+
+    const identity = JSON.parse(
+      await this.callTool('agent_server_identity')
+    ) as Partial<DashboardServerIdentity>;
+    if (
+      identity.server !== 'agent-rack' ||
+      identity.identityVersion !== 1 ||
+      typeof identity.configFingerprint !== 'string' ||
+      !/^sha256:[0-9a-f]{64}$/.test(identity.configFingerprint)
+    ) {
+      throw new Error('Server returned an invalid agent-rack identity.');
+    }
+    return identity as DashboardServerIdentity;
   }
 
   async listSessions(): Promise<AgentSessionInfo[]> {

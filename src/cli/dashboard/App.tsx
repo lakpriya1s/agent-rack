@@ -23,6 +23,7 @@ interface AppProps {
   version?: string;
   remoteClient: DashboardRemoteClient;
   serverMode: DashboardServerMode;
+  configAuthority: 'local' | 'external';
   startupMessage?: string;
 }
 
@@ -72,12 +73,29 @@ export function moveSessionSelection(
   return { ...state, selectedSessionId: state.sessions[nextIndex].sessionId };
 }
 
+export function dashboardConfigAuthorityWarning(
+  configAuthority: 'local' | 'external'
+): string | undefined {
+  if (configAuthority === 'local') return undefined;
+  return "EXTERNAL CONFIG — the --connect server's agents, workspaces, and security settings are authoritative; local config values shown here may not apply.";
+}
+
+export function shouldRequestDashboardExit(
+  input: string,
+  ctrl: boolean,
+  modalOpen: boolean
+): boolean {
+  if (input === 'c' && ctrl) return true;
+  return input === 'q' && !modalOpen;
+}
+
 export const DashboardApp: React.FC<AppProps> = ({
   config,
   configPath,
   version,
   remoteClient,
   serverMode,
+  configAuthority,
   startupMessage,
 }) => {
   const { exit } = useApp();
@@ -158,6 +176,7 @@ export const DashboardApp: React.FC<AppProps> = ({
     : 0;
 
   const activeSessionsCount = sessions.filter((s) => s.status === 'running').length;
+  const configAuthorityWarning = dashboardConfigAuthorityWarning(configAuthority);
 
   const requestExit = async () => {
     if (quitInFlight.current) return;
@@ -191,13 +210,13 @@ export const DashboardApp: React.FC<AppProps> = ({
   };
 
   useInput((input, key) => {
-    if (activeTab === 'launcher' || showSendInputModal) {
+    const modalOpen = activeTab === 'launcher' || showSendInputModal;
+    if (shouldRequestDashboardExit(input, key.ctrl, modalOpen)) {
+      void requestExit();
       return;
     }
 
-    const requestedQuit = input === 'q' || (input === 'c' && key.ctrl);
-    if (requestedQuit) {
-      void requestExit();
+    if (modalOpen) {
       return;
     }
 
@@ -276,6 +295,14 @@ export const DashboardApp: React.FC<AppProps> = ({
         sanitizedEnv={config.security.sanitizeEnv !== false}
         version={version}
       />
+
+      {configAuthorityWarning && (
+        <Box marginBottom={1} borderStyle="round" borderColor="yellow" paddingX={1}>
+          <Text color="yellow" bold>
+            {configAuthorityWarning}
+          </Text>
+        </Box>
+      )}
 
       {connectionLost && (
         <Box marginBottom={1} borderStyle="round" borderColor="red" paddingX={1}>

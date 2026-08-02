@@ -6,6 +6,8 @@ import type { AddressInfo } from 'net';
 import type http from 'http';
 import { startAgentMCPServer } from '../../server.js';
 import { DashboardRemoteClient } from './remoteClient.js';
+import { loadConfig } from '../../config/loader.js';
+import { fingerprintAgentMCPConfig } from '../../config/fingerprint.js';
 
 let runningServer: http.Server | undefined;
 
@@ -52,6 +54,12 @@ describe('DashboardRemoteClient', () => {
       const url = await startTestServer(configPath);
       client = new DashboardRemoteClient(url);
       await client.connect();
+
+      await expect(client.validateDashboardServer()).resolves.toEqual({
+        server: 'agent-rack',
+        identityVersion: 1,
+        configFingerprint: fingerprintAgentMCPConfig(loadConfig(configPath).config),
+      });
 
       const created = await client.createSession('echoer', 'hello', dir, 'task');
       expect(created.agentId).toBe('echoer');

@@ -7,6 +7,7 @@ function connection(overrides: Partial<DashboardConnection> = {}): DashboardConn
   return {
     url: 'http://127.0.0.1:8987/sse',
     mode: 'auto-started',
+    configAuthority: 'local',
     client: {} as DashboardConnection['client'],
     close: vi.fn(async () => undefined),
     ...overrides,
@@ -63,8 +64,9 @@ describe('startDashboard orchestration', () => {
         order.push('coordinate');
         return shared;
       },
-      setupClaude: async () => {
+      setupClaude: async (_url, authority) => {
         order.push('setup');
+        expect(authority).toBe('local');
         return { notice: 'Restart or reconnect once.' };
       },
       renderDashboard,
@@ -74,6 +76,24 @@ describe('startDashboard orchestration', () => {
 
     expect(order).toEqual(['coordinate', 'setup', 'render']);
     expect(shared.close).toHaveBeenCalledOnce();
+  });
+
+  it('identifies an explicit external connection before Claude setup', async () => {
+    const setupClaude = vi.fn(async () => ({}));
+    const deps = dependencies({
+      coordinate: async () => connection({
+        mode: 'existing',
+        configAuthority: 'external',
+      }),
+      setupClaude,
+    });
+
+    await startDashboard(undefined, 'http://127.0.0.1:9999/sse', deps);
+
+    expect(setupClaude).toHaveBeenCalledWith(
+      'http://127.0.0.1:8987/sse',
+      'external'
+    );
   });
 
   it('opens with a warning and cleans up when setup fails', async () => {

@@ -61,6 +61,9 @@ export class AgentSession {
 
 export class SessionManager {
   private sessions = new Map<string, AgentSession>();
+  private runPromises = new Map<string, Promise<void>>();
+  private acceptingSessions = true;
+  private shutdownPromise?: Promise<void>;
 
   constructor(private config: AgentMCPConfig) {}
 
@@ -77,6 +80,10 @@ export class SessionManager {
       timeoutSeconds?: number;
     }
   ): AgentSession {
+    if (!this.acceptingSessions) {
+      throw new Error('Session manager is shutting down and cannot create new sessions.');
+    }
+
     const activeCount = Array.from(this.sessions.values()).filter((s) => s.status === 'running').length;
     const maxAllowed = this.config.security.maxConcurrentSessions;
 
@@ -104,19 +111,23 @@ export class SessionManager {
       sanitizeEnv: this.config.security.sanitizeEnv,
     };
 
-    session.controller
+    const runPromise = session.controller
       .runSync(runOptions)
       .then((result) => {
         session.result = result;
-        session.status = 'completed';
+        if (session.status === 'running') session.status = 'completed';
         if (session.kind === 'review') {
           session.reviewResult = reviewFromResult(result);
         }
       })
       .catch((err) => {
         session.error = err instanceof Error ? err.message : String(err);
-        session.status = 'failed';
+        if (session.status === 'running') session.status = 'failed';
+      })
+      .finally(() => {
+        this.runPromises.delete(session.id);
       });
+    this.runPromises.set(session.id, runPromise);
 
     return session;
   }
@@ -143,6 +154,18 @@ export class SessionManager {
     }
 
     return session;
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.acceptingSessions = false;
+    this.shutdownPromise = (async () => {
+      for (const session of this.sessions.values()) {
+        if (session.status === 'running') this.cancelSession(session.id);
+      }
+      await Promise.allSettled([...this.runPromises.values()]);
+    })();
+    return this.shutdownPromise;
   }
 
   sendToSession(sessionId: string, message: string): void {

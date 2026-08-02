@@ -18,6 +18,7 @@ export class AgentProcessController {
   private ptyProcess?: pty.IPty;
   private buffer = new EventRingBuffer(512);
   private timeoutTimer?: NodeJS.Timeout;
+  private killTimer?: NodeJS.Timeout;
 
   constructor(
     public readonly agentConfig: AgentConfig,
@@ -34,10 +35,14 @@ export class AgentProcessController {
     const timeoutMs = (options.timeoutSeconds || 600) * 1000;
 
     return new Promise<FormattedResult>((resolve, reject) => {
-      // Handle timeout
+      let timeoutError: Error | undefined;
+      // A timeout starts cancellation, but the run settles only after the child exits so
+      // SessionManager.shutdown cannot return while escalation is still in progress.
       this.timeoutTimer = setTimeout(() => {
+        timeoutError = new Error(
+          `Agent execution timed out after ${options.timeoutSeconds || 600} seconds.`
+        );
         this.cancel();
-        reject(new Error(`Agent execution timed out after ${options.timeoutSeconds || 600} seconds.`));
       }, timeoutMs);
 
       if (this.agentConfig.transport === 'pty_interactive') {
@@ -57,8 +62,11 @@ export class AgentProcessController {
 
           this.ptyProcess.onExit(({ exitCode }) => {
             if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
+            if (this.killTimer) clearTimeout(this.killTimer);
+            this.ptyProcess = undefined;
             const result = this.adapter.formatResponse(this.buffer.getAll(), exitCode);
-            resolve(result);
+            if (timeoutError) reject(timeoutError);
+            else resolve(result);
           });
         } catch (err) {
           if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
@@ -88,13 +96,18 @@ export class AgentProcessController {
           subprocess
             .then((result) => {
               if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
+              if (this.killTimer) clearTimeout(this.killTimer);
+              this.execaSubprocess = undefined;
               const exitCode = result.exitCode ?? 0;
               const formattedResult = this.adapter.formatResponse(this.buffer.getAll(), exitCode);
-              resolve(formattedResult);
+              if (timeoutError) reject(timeoutError);
+              else resolve(formattedResult);
             })
             .catch((err) => {
               if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
-              reject(err);
+              if (this.killTimer) clearTimeout(this.killTimer);
+              this.execaSubprocess = undefined;
+              reject(timeoutError ?? err);
             });
         } catch (err) {
           if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
@@ -118,24 +131,39 @@ export class AgentProcessController {
     if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
 
     if (this.ptyProcess) {
+      const ptyProcess = this.ptyProcess;
       try {
-        this.ptyProcess.kill();
+        ptyProcess.kill();
       } catch {
-        // Ignore
+        // Continue to the forced termination below.
       }
+      this.killTimer ??= setTimeout(() => {
+        if (this.ptyProcess === ptyProcess) {
+          try {
+            ptyProcess.kill('SIGKILL');
+          } catch {
+            // The process may already have exited.
+          }
+        }
+      }, 3000);
     }
 
     if (this.execaSubprocess) {
+      const subprocess = this.execaSubprocess;
       try {
-        this.execaSubprocess.kill('SIGINT');
-        setTimeout(() => {
-          if (this.execaSubprocess) {
-            this.execaSubprocess.kill('SIGKILL');
-          }
-        }, 3000);
+        subprocess.kill('SIGINT');
       } catch {
-        // Ignore
+        // Continue to the forced termination below.
       }
+      this.killTimer ??= setTimeout(() => {
+        if (this.execaSubprocess === subprocess) {
+          try {
+            subprocess.kill('SIGKILL');
+          } catch {
+            // The process may already have exited.
+          }
+        }
+      }, 3000);
     }
   }
 }

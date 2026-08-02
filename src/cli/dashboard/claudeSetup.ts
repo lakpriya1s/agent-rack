@@ -24,6 +24,7 @@ export type ClaudeCommandRunner = (
 export interface ClaudeSetupDependencies {
   run: ClaudeCommandRunner;
   confirm(message: string): Promise<boolean>;
+  externalConnection?: boolean;
 }
 
 export interface ClaudeSetupResult {
@@ -117,6 +118,7 @@ export async function ensureClaudeDashboardRegistration(
   const deps: ClaudeSetupDependencies = {
     run: dependencies.run ?? defaultRun,
     confirm: dependencies.confirm ?? defaultConfirm,
+    externalConnection: dependencies.externalConnection,
   };
 
   let inspected: ClaudeCommandResult;
@@ -148,31 +150,21 @@ export async function ensureClaudeDashboardRegistration(
     return {};
   }
 
+  if (registration.exists) {
+    return {
+      warning: `Claude Code's existing agent-rack registration was left unchanged because it cannot be restored losslessly. Remove it manually with "claude mcp remove agent-rack --scope ${registration.scope}" only when ready to replace it, then rerun the dashboard.`,
+    };
+  }
+
   const approved = await deps.confirm(
-    `Connect Claude Code's agent-rack MCP registration to the shared dashboard at ${url}?`
+    deps.externalConnection
+      ? `This --connect server's agents, workspaces, and security settings are external and authoritative. Connect Claude Code's agent-rack MCP registration to ${url}?`
+      : `Connect Claude Code's agent-rack MCP registration to the shared dashboard at ${url}?`
   );
   if (!approved) {
     return {
       warning: 'Claude Code MCP setup was not changed. The dashboard will open, but Claude sessions may not appear here.',
     };
-  }
-
-  if (registration.exists) {
-    let removed: ClaudeCommandResult;
-    try {
-      removed = await deps.run('claude', [
-        'mcp',
-        'remove',
-        'agent-rack',
-        '--scope',
-        registration.scope,
-      ]);
-    } catch (error) {
-      return {
-        warning: `Claude Code MCP setup could not remove the old registration: ${error instanceof Error ? error.message : String(error)}. The dashboard will still open.`,
-      };
-    }
-    if (removed.exitCode !== 0) return commandFailure('remove the old registration', removed);
   }
 
   let added: ClaudeCommandResult;

@@ -6,6 +6,7 @@ import { getDefaultConfig } from '../config/loader.js';
 import { SessionManager } from '../engine/session.js';
 import { waitForSessionCompletion } from '../test-helpers/session.js';
 import { registerUnifiedTools } from './unified.js';
+import { fingerprintAgentMCPConfig } from '../config/fingerprint.js';
 
 function echoArgsAgentConfig(dir: string) {
   const echoScript = path.join(dir, 'echo-args.cjs');
@@ -112,6 +113,22 @@ describe('agent_session_list tool', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('agent_server_identity tool', () => {
+  it('exposes agent-rack identity and the effective config fingerprint', async () => {
+    const config = getDefaultConfig('/tmp/agent-rack-identity');
+    const tools = registerUnifiedTools(config, new SessionManager(config));
+    const identityTool = tools.find((tool) => tool.name === 'agent_server_identity');
+
+    expect(identityTool).toBeDefined();
+    const response = await identityTool!.handler({});
+    expect(JSON.parse((response.content as any)[0].text)).toEqual({
+      server: 'agent-rack',
+      identityVersion: 1,
+      configFingerprint: fingerprintAgentMCPConfig(config),
+    });
   });
 });
 

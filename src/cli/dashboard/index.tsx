@@ -19,6 +19,7 @@ export interface DashboardRenderProps {
   version: string;
   remoteClient: DashboardConnection['client'];
   serverMode: DashboardConnection['mode'];
+  configAuthority: DashboardConnection['configAuthority'];
   startupMessage?: string;
 }
 
@@ -26,7 +27,10 @@ export interface DashboardStartupDependencies {
   stdin: { isTTY?: boolean };
   loadConfig: typeof loadAgentRackConfig;
   coordinate: typeof coordinateDashboardServer;
-  setupClaude(url: string): Promise<ClaudeSetupResult>;
+  setupClaude(
+    url: string,
+    configAuthority: DashboardConnection['configAuthority']
+  ): Promise<ClaudeSetupResult>;
   renderDashboard(props: DashboardRenderProps): Promise<void>;
   reportError(message: string): void;
   setExitCode(code: number): void;
@@ -36,7 +40,10 @@ const defaultDependencies: DashboardStartupDependencies = {
   stdin: process.stdin,
   loadConfig: loadAgentRackConfig,
   coordinate: coordinateDashboardServer,
-  setupClaude: ensureClaudeDashboardRegistration,
+  setupClaude: (url, configAuthority) =>
+    ensureClaudeDashboardRegistration(url, {
+      externalConnection: configAuthority === 'external',
+    }),
   renderDashboard: async (props) => {
     const { waitUntilExit } = render(<DashboardApp {...props} />, { exitOnCtrlC: false });
     await waitUntilExit();
@@ -75,7 +82,7 @@ export async function startDashboard(
   try {
     let setup: ClaudeSetupResult;
     try {
-      setup = await deps.setupClaude(connection.url);
+      setup = await deps.setupClaude(connection.url, connection.configAuthority);
     } catch (error) {
       setup = {
         warning: `Claude Code MCP setup failed: ${error instanceof Error ? error.message : String(error)}. The dashboard will still open.`,
@@ -88,6 +95,7 @@ export async function startDashboard(
       version: getPackageVersion(),
       remoteClient: connection.client,
       serverMode: connection.mode,
+      configAuthority: connection.configAuthority,
       startupMessage: setup.warning ?? setup.notice,
     });
   } finally {

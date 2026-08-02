@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { EventRingBuffer } from './buffer.js';
 import { getDefaultConfig } from '../config/loader.js';
 import { SessionManager } from './session.js';
@@ -68,6 +71,105 @@ describe('SessionManager.listSessions', () => {
     expect(listed.map((s) => s.id)).toEqual([second.id, first.id]);
     expect(listed[0].getInfo().kind).toBe('review');
     expect(listed[1].getInfo().kind).toBe('task');
+  });
+});
+
+describe('SessionManager shutdown', () => {
+  it('cancels a long-running child and awaits process settlement', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-rack-shutdown-'));
+    const pidFile = path.join(dir, 'child.pid');
+    const config = getDefaultConfig(dir);
+    config.agents['long_running'] = {
+      name: 'Long Running',
+      command: 'node',
+      args: [
+        '-e',
+        `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`,
+      ],
+      transport: 'claude_stream_json',
+      env: {},
+    };
+    const manager = new SessionManager(config);
+
+    const session = manager.createSession('long_running', 'wait', dir);
+    const deadline = Date.now() + 2000;
+    while (!fs.existsSync(pidFile) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(fs.existsSync(pidFile)).toBe(true);
+    const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+
+    await manager.shutdown();
+
+    expect(session.status).toBe('cancelled');
+    expect(() => process.kill(pid, 0)).toThrow();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('keeps a timed-out PTY child tracked through forced termination', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-rack-pty-shutdown-'));
+    const pidFile = path.join(dir, 'child.pid');
+    const config = getDefaultConfig(dir);
+    config.agents['stubborn_pty'] = {
+      name: 'Stubborn PTY',
+      command: 'node',
+      args: [
+        '-e',
+        `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); for (const signal of ['SIGHUP', 'SIGINT', 'SIGTERM']) process.on(signal, () => {}); setInterval(() => {}, 1000)`,
+      ],
+      transport: 'pty_interactive',
+      env: {},
+    };
+    const manager = new SessionManager(config);
+    let pid: number | undefined;
+
+    try {
+      const session = manager.createSession('stubborn_pty', 'wait', dir, undefined, {
+        timeoutSeconds: 0.05,
+      });
+      const deadline = Date.now() + 2000;
+      while (!fs.existsSync(pidFile) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(fs.existsSync(pidFile)).toBe(true);
+      pid = Number(fs.readFileSync(pidFile, 'utf8'));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(session.status).toBe('running');
+
+      await manager.shutdown();
+
+      expect(session.status).toBe('cancelled');
+      expect(() => process.kill(pid!, 0)).toThrow();
+    } finally {
+      if (pid !== undefined) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          // The shutdown path already terminated it.
+        }
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it('atomically rejects creates once shutdown begins and awaits the raced run', async () => {
+    const config = getDefaultConfig();
+    config.agents['long_running'] = {
+      name: 'Long Running',
+      command: 'node',
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      transport: 'claude_stream_json',
+      env: {},
+    };
+    const manager = new SessionManager(config);
+    const raced = manager.createSession('long_running', 'wait');
+
+    const shuttingDown = manager.shutdown();
+    expect(() => manager.createSession('long_running', 'too late')).toThrow(
+      /shutting down/
+    );
+    await shuttingDown;
+    expect(raced.status).toBe('cancelled');
   });
 });
 

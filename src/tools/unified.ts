@@ -5,6 +5,7 @@ import { validateWorkspacePath } from '../security/workspace.js';
 import { createAdapter } from '../adapters/index.js';
 import { AgentProcessController } from '../engine/process.js';
 import { listAgentAvailability } from '../engine/availability.js';
+import { fingerprintAgentMCPConfig } from '../config/fingerprint.js';
 import { applyModelOverride, requireAgentConfig, resolveModel, resolveTimeoutSeconds, resolveWorkspace } from './args.js';
 
 export interface MCPToolDefinition {
@@ -331,6 +332,27 @@ export function registerUnifiedTools(
         ],
       };
     },
+  });
+
+  tools.push({
+    name: 'agent_server_identity',
+    description: 'Returns agent-rack server identity and a deterministic effective-configuration fingerprint',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    handler: async () => ({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            server: 'agent-rack',
+            identityVersion: 1,
+            configFingerprint: fingerprintAgentMCPConfig(config),
+          }),
+        },
+      ],
+    }),
   });
 
   return tools;

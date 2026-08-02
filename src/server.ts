@@ -184,6 +184,7 @@ export async function startSSEServer(
   const close = (): Promise<void> => {
     if (closePromise) return closePromise;
     closePromise = (async () => {
+      await ctx.sessionManager.shutdown();
       await Promise.allSettled([...mcpServers.values()].map((mcpServer) => mcpServer.close()));
       transports.clear();
       mcpServers.clear();
