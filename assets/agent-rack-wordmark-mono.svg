@@ -1,7 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"
- viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="title desc">
-  <title id="title">Agent Rack monochrome icon</title>
-  <desc id="desc">Monochrome Agent Rack connector mark.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="160"
+ viewBox="0 0 700 160" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Rack monochrome horizontal logo</title>
+  <desc id="desc">Single-color Agent Rack wordmark with larger clean connector mark.</desc>
+
+  <g transform="translate(12 -8) scale(0.36)">
   <circle cx="116" cy="104" r="28" fill="#111827"/>
   <path d="M116 140V226" stroke="#111827" stroke-width="28" stroke-linecap="round"/>
   <circle cx="208" cy="104" r="28" fill="#111827"/>
@@ -16,4 +18,8 @@
   <path d="M396 226C396 282 336 288 292 330" stroke="#111827" stroke-width="24" stroke-linecap="round"/>
   <rect x="214" y="312" width="84" height="84" rx="24"
         transform="rotate(45 256 354)" fill="#111827"/>
+  </g>
+  <text x="194" y="111" fill="#111827"
+        font-family="Inter, Arial, Helvetica, sans-serif"
+        font-size="72" font-weight="800" letter-spacing="-3">Agent Rack</text>
 </svg>

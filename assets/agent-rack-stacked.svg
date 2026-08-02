@@ -1,7 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"
- viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="title desc">
-  <title id="title">Agent Rack color icon</title>
-  <desc id="desc">Four coding-agent connectors converge into one MCP hub, without an outer frame or plus symbol.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="410"
+ viewBox="0 0 600 410" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Rack stacked logo</title>
+  <desc id="desc">Large clean connector symbol above the Agent Rack wordmark.</desc>
+
 
   <defs>
     <linearGradient id="hubGradient" x1="214" y1="314" x2="298" y2="398" gradientUnits="userSpaceOnUse">
@@ -9,6 +10,7 @@
       <stop offset="1" stop-color="#06B6D4"/>
     </linearGradient>
   </defs>
+  <g transform="translate(136 -34) scale(0.64)">
   <circle cx="116" cy="104" r="28" fill="#7C3AED"/>
   <path d="M116 140V226" stroke="#7C3AED" stroke-width="28" stroke-linecap="round"/>
   <circle cx="208" cy="104" r="28" fill="#06B6D4"/>
@@ -23,4 +25,15 @@
   <path d="M396 226C396 282 336 288 292 330" stroke="#F59E0B" stroke-width="24" stroke-linecap="round"/>
   <rect x="214" y="312" width="84" height="84" rx="24"
         transform="rotate(45 256 354)" fill="url(#hubGradient)"/>
+  </g>
+  <text x="300" y="336" text-anchor="middle" fill="#111827"
+        font-family="Inter, Arial, Helvetica, sans-serif"
+        font-size="74" font-weight="800" letter-spacing="-3">
+    Agent <tspan fill="#7C3AED">Rack</tspan>
+  </text>
+  <text x="300" y="376" text-anchor="middle" fill="#64748B"
+        font-family="Inter, Arial, Helvetica, sans-serif"
+        font-size="17" font-weight="650" letter-spacing="1.9">
+    ONE MCP BRIDGE · MANY CODING AGENTS
+  </text>
 </svg>

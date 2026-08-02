@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/agent-rack-logo-horizontal-dark.svg">
-  <img src="./assets/agent-rack-logo-horizontal.svg" alt="agent-rack" width="480">
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/agent-rack-wordmark-dark.svg">
+  <img src="./assets/agent-rack-wordmark-light.svg" alt="agent-rack" width="480">
 </picture>
 
 **Bridge any CLI coding agent into any MCP client**<br>
