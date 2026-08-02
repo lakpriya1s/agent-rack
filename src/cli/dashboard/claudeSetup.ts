@@ -10,6 +10,10 @@ export interface ClaudeRegistration {
   url?: string;
   command?: string;
   args?: string[];
+  env?: Record<string, string>;
+  headers?: string[];
+  /** True when `mcp get` reported options that cannot be reconstructed safely. */
+  unsupportedOptions?: boolean;
 }
 
 export interface ClaudeCommandResult {
@@ -34,21 +38,58 @@ export interface ClaudeSetupResult {
   notice?: string;
 }
 
+function stringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value);
+  if (!entries.every(([key, item]) => key.length > 0 && typeof item === 'string')) return undefined;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function headersFrom(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    return value.every((header) => typeof header === 'string' && header.includes(':'))
+      ? [...value]
+      : undefined;
+  }
+  const headers = stringRecord(value);
+  return headers ? Object.entries(headers).map(([name, value]) => `${name}: ${value}`) : undefined;
+}
+
+const JSON_REGISTRATION_FIELDS = new Set([
+  'name', 'exists', 'scope', 'type', 'url', 'command', 'args', 'env', 'environment', 'headers', 'status',
+]);
+
 export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistration {
   try {
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
-    const scopeValue = typeof parsed.scope === 'string' ? parsed.scope.toLowerCase() : 'local';
-    const scope: ClaudeScope =
-      scopeValue === 'project' || scopeValue === 'user' ? scopeValue : 'local';
-    const type = typeof parsed.type === 'string' ? parsed.type.toLowerCase() : undefined;
-    const url = typeof parsed.url === 'string' ? parsed.url : undefined;
-    const command = typeof parsed.command === 'string' ? parsed.command : undefined;
-    const args = Array.isArray(parsed.args) && parsed.args.every((arg) => typeof arg === 'string')
-      ? parsed.args
-      : undefined;
     const identifiesAgentRack =
       parsed.name === 'agent-rack' || 'scope' in parsed || 'type' in parsed || 'url' in parsed;
     if (identifiesAgentRack) {
+      const scopeValue = typeof parsed.scope === 'string' ? parsed.scope.toLowerCase() : 'local';
+      const validScope = scopeValue === 'local' || scopeValue === 'project' || scopeValue === 'user';
+      const scope: ClaudeScope = validScope ? scopeValue : 'local';
+      const type = typeof parsed.type === 'string' ? parsed.type.toLowerCase() : undefined;
+      const validType = type === undefined || type === 'stdio' || type === 'sse' || type === 'http';
+      const url = typeof parsed.url === 'string' ? parsed.url : undefined;
+      const command = typeof parsed.command === 'string' ? parsed.command : undefined;
+      const args = Array.isArray(parsed.args) && parsed.args.every((arg) => typeof arg === 'string')
+        ? parsed.args
+        : undefined;
+      const environmentKey = 'env' in parsed ? 'env' : 'environment' in parsed ? 'environment' : undefined;
+      const env = environmentKey ? stringRecord(parsed[environmentKey]) : undefined;
+      const headers = 'headers' in parsed ? headersFrom(parsed.headers) : undefined;
+      const hasUnknownFields = Object.keys(parsed).some((key) => !JSON_REGISTRATION_FIELDS.has(key));
+      const malformedKnownField =
+        !validScope ||
+        !validType ||
+        ('url' in parsed && !url) ||
+        ('command' in parsed && !command) ||
+        ('args' in parsed && !args) ||
+        ('env' in parsed && !stringRecord(parsed.env)) ||
+        ('environment' in parsed && !stringRecord(parsed.environment)) ||
+        ('env' in parsed && 'environment' in parsed) ||
+        ('headers' in parsed && !headers);
+
       return {
         exists: parsed.exists !== false,
         scope,
@@ -56,6 +97,9 @@ export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistrati
         ...(url ? { url } : {}),
         ...(command ? { command } : {}),
         ...(args ? { args } : {}),
+        ...(env ? { env } : {}),
+        ...(headers ? { headers } : {}),
+        ...(hasUnknownFields || malformedKnownField ? { unsupportedOptions: true } : {}),
       };
     }
   } catch {
@@ -81,6 +125,7 @@ export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistrati
       })
     : undefined;
   const exists = /^\s*agent-rack:\s*$/im.test(output) || Boolean(scopeLabel || type || url);
+  const hasUnrecoverableOptions = /^\s*(?:Env(?:ironment)?|Headers?|Auth(?:entication)?|OAuth|Client ID|Timeout|Options?):/im.test(output);
 
   return {
     exists,
@@ -89,6 +134,7 @@ export function parseClaudeMcpGet(stdout: string, stderr = ''): ClaudeRegistrati
     ...(url ? { url } : {}),
     ...(command ? { command } : {}),
     ...(args ? { args } : {}),
+    ...(exists && hasUnrecoverableOptions ? { unsupportedOptions: true } : {}),
   };
 }
 
@@ -112,8 +158,9 @@ async function defaultConfirm(message: string): Promise<boolean> {
 }
 
 function commandFailure(action: string, result: ClaudeCommandResult): ClaudeSetupResult {
-  const detail = result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
-  return { warning: `Claude Code MCP setup could not ${action}: ${detail}. The dashboard will still open.` };
+  return {
+    warning: `Claude Code MCP setup could not ${action} (exit code ${result.exitCode}). The dashboard will still open.`,
+  };
 }
 
 function sameUrl(left: string | undefined, right: string): boolean {
@@ -126,12 +173,30 @@ function sameUrl(left: string | undefined, right: string): boolean {
 }
 
 function restoreRegistrationArgs(registration: ClaudeRegistration): string[] | undefined {
-  const prefix = ['mcp', 'add', '--transport', registration.type ?? '', '--scope', registration.scope, 'agent-rack'];
-  if (registration.type === 'sse' && registration.url) return [...prefix, registration.url];
+  const prefix = ['mcp', 'add', '--transport', registration.type ?? '', '--scope', registration.scope];
+  const options = [
+    ...Object.entries(registration.env ?? {}).flatMap(([name, value]) => ['-e', `${name}=${value}`]),
+    ...(registration.headers ?? []).flatMap((header) => ['-H', header]),
+  ];
+  if ((registration.type === 'sse' || registration.type === 'http') && registration.url) {
+    return [...prefix, ...options, 'agent-rack', registration.url];
+  }
   if (registration.type === 'stdio' && registration.command) {
-    return [...prefix, registration.command, ...(registration.args ?? [])];
+    return [...prefix, ...options, 'agent-rack', registration.command, ...(registration.args ?? [])];
   }
   return undefined;
+}
+
+async function restoreRegistration(
+  run: ClaudeCommandRunner,
+  args: string[] | undefined
+): Promise<boolean> {
+  if (!args) return false;
+  try {
+    return (await run('claude', args)).exitCode === 0;
+  } catch {
+    return false;
+  }
 }
 
 export async function ensureClaudeDashboardRegistration(
@@ -158,7 +223,7 @@ export async function ensureClaudeDashboardRegistration(
       warning:
         code === 'ENOENT' || /ENOENT|not found/i.test(detail)
           ? 'Claude Code CLI was not found. The dashboard will open without changing Claude MCP setup.'
-          : `Claude Code MCP setup could not be inspected: ${detail}. The dashboard will still open.`,
+          : 'Claude Code MCP setup could not be inspected. The dashboard will still open.',
     };
   }
 
@@ -178,9 +243,9 @@ export async function ensureClaudeDashboardRegistration(
   }
 
   const restoreArgs = registration.exists ? restoreRegistrationArgs(registration) : undefined;
-  if (registration.exists && !restoreArgs) {
+  if (registration.exists && (registration.unsupportedOptions || !restoreArgs)) {
     return {
-      warning: `Claude Code's existing agent-rack registration was left unchanged because it cannot be restored safely. Remove it manually with "claude mcp remove agent-rack --scope ${registration.scope}" only when ready to replace it, then rerun the dashboard.`,
+      warning: `Claude Code's existing agent-rack registration was left unchanged because some settings cannot be restored safely. Remove it manually with "claude mcp remove agent-rack --scope ${registration.scope}" only when ready to replace it, then rerun the dashboard.`,
     };
   }
 
@@ -199,9 +264,9 @@ export async function ensureClaudeDashboardRegistration(
     let removed: ClaudeCommandResult;
     try {
       removed = await deps.run('claude', ['mcp', 'remove', 'agent-rack', '--scope', registration.scope]);
-    } catch (error) {
+    } catch {
       return {
-        warning: `Claude Code MCP setup could not remove the previous registration: ${error instanceof Error ? error.message : String(error)}. The dashboard will still open.`,
+        warning: 'Claude Code MCP setup could not remove the previous registration. The dashboard will still open.',
       };
     }
     if (removed.exitCode !== 0) return commandFailure('remove the previous registration', removed);
@@ -219,20 +284,19 @@ export async function ensureClaudeDashboardRegistration(
       'agent-rack',
       url,
     ]);
-  } catch (error) {
-    if (restoreArgs) await deps.run('claude', restoreArgs).catch(() => undefined);
+  } catch {
+    const restored = await restoreRegistration(deps.run, restoreArgs);
     return {
-      warning: `Claude Code MCP setup could not add the shared registration: ${error instanceof Error ? error.message : String(error)}. ${restoreArgs ? 'The previous registration was restored.' : ''} The dashboard will still open.`,
+      warning: `Claude Code MCP setup could not add the shared registration. ${restored ? 'The previous registration was restored.' : 'The previous registration could not be restored.'} The dashboard will still open.`,
     };
   }
   if (added.exitCode !== 0) {
     if (restoreArgs) {
-      const restored = await deps.run('claude', restoreArgs).catch(() => undefined);
-      const detail = added.stderr.trim() || added.stdout.trim() || `exit code ${added.exitCode}`;
-      if (restored?.exitCode === 0) {
-        return { warning: `Claude Code MCP setup could not add the shared registration: ${detail}. The previous registration was restored. The dashboard will still open.` };
+      const restored = await restoreRegistration(deps.run, restoreArgs);
+      if (restored) {
+        return { warning: 'Claude Code MCP setup could not add the shared registration. The previous registration was restored. The dashboard will still open.' };
       }
-      return { warning: `Claude Code MCP setup could not add the shared registration: ${detail}. The previous registration could not be restored. The dashboard will still open.` };
+      return { warning: 'Claude Code MCP setup could not add the shared registration. The previous registration could not be restored. The dashboard will still open.' };
     }
     return commandFailure('add the shared registration', added);
   }

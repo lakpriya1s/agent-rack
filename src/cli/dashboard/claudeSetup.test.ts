@@ -44,6 +44,42 @@ describe('parseClaudeMcpGet', () => {
     });
   });
 
+  it('parses restorable JSON environment and HTTP header settings', () => {
+    expect(
+      parseClaudeMcpGet(
+        JSON.stringify({
+          name: 'agent-rack',
+          scope: 'project',
+          type: 'http',
+          url: 'https://example.test/mcp',
+          env: { API_KEY: 'secret-value' },
+          headers: { Authorization: 'Bearer token-value' },
+        })
+      )
+    ).toEqual({
+      exists: true,
+      scope: 'project',
+      type: 'http',
+      url: 'https://example.test/mcp',
+      env: { API_KEY: 'secret-value' },
+      headers: ['Authorization: Bearer token-value'],
+    });
+  });
+
+  it('marks JSON registrations with unsupported authentication settings as unsafe to replace', () => {
+    expect(
+      parseClaudeMcpGet(
+        JSON.stringify({
+          name: 'agent-rack',
+          scope: 'user',
+          type: 'sse',
+          url: 'https://example.test/sse',
+          clientId: 'private-client-id',
+        })
+      )
+    ).toMatchObject({ exists: true, unsupportedOptions: true });
+  });
+
   it('recognizes a missing registration and defaults its future scope to local', () => {
     expect(parseClaudeMcpGet('No MCP server named "agent-rack". Configured servers:')).toEqual({
       exists: false,
@@ -98,11 +134,89 @@ describe('ensureClaudeDashboardRegistration', () => {
       confirm: async () => true,
     });
 
-    expect(result.warning).toContain('add failed');
+    expect(result.warning).toContain('could not add the shared registration');
     expect(result.warning).toContain('restored');
     expect(run).toHaveBeenNthCalledWith(4, 'claude', [
       'mcp', 'add', '--transport', 'stdio', '--scope', 'project', 'agent-rack', 'npx', '-y', 'agent-rack', 'start',
     ]);
+  });
+
+  it('restores stdio environment from a restorable JSON registration', async () => {
+    const registration = JSON.stringify({
+      name: 'agent-rack',
+      scope: 'project',
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', 'agent-rack', 'start'],
+      environment: { API_KEY: 'secret-value' },
+    });
+    const run = fakeRunner([{ stdout: registration }, {}, { exitCode: 1, stderr: 'add failed' }, {}]);
+
+    await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
+      run,
+      confirm: async () => true,
+    });
+
+    expect(run).toHaveBeenNthCalledWith(4, 'claude', [
+      'mcp', 'add', '--transport', 'stdio', '--scope', 'project',
+      '-e', 'API_KEY=secret-value',
+      'agent-rack', 'npx', '-y', 'agent-rack', 'start',
+    ]);
+  });
+
+  it('reports when rollback throws instead of claiming restoration succeeded', async () => {
+    const run = fakeRunner([
+      { stdout: `agent-rack:\n  Scope: Local config\n  Type: stdio\n  Command: npx\n` },
+      {},
+      new Error('add failed'),
+      new Error('restore failed'),
+    ]);
+
+    const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
+      run,
+      confirm: async () => true,
+    });
+
+    expect(result.warning).toContain('could not be restored');
+    expect(result.warning).not.toContain('restore failed');
+  });
+
+  it('restores HTTP environment and headers from a restorable JSON registration', async () => {
+    const registration = JSON.stringify({
+      name: 'agent-rack',
+      scope: 'user',
+      type: 'http',
+      url: 'https://example.test/mcp',
+      env: { API_KEY: 'secret-value' },
+      headers: { Authorization: 'Bearer token-value' },
+    });
+    const run = fakeRunner([{ stdout: registration }, {}, { exitCode: 1, stderr: 'add failed' }, {}]);
+
+    const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
+      run,
+      confirm: async () => true,
+    });
+
+    expect(result.warning).toContain('previous registration was restored');
+    expect(run).toHaveBeenNthCalledWith(4, 'claude', [
+      'mcp', 'add', '--transport', 'http', '--scope', 'user',
+      '-e', 'API_KEY=secret-value', '-H', 'Authorization: Bearer token-value',
+      'agent-rack', 'https://example.test/mcp',
+    ]);
+  });
+
+  it('refuses to replace registrations with unsupported settings without exposing them', async () => {
+    const run = fakeRunner([{ stdout: JSON.stringify({
+      name: 'agent-rack', scope: 'user', type: 'sse', url: 'https://example.test/sse', clientId: 'secret-client-id',
+    }) }]);
+    const confirm = vi.fn();
+
+    const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', { run, confirm });
+
+    expect(result.warning).toContain('left unchanged');
+    expect(result.warning).not.toContain('secret-client-id');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it('opens with a warning when adding a missing registration is declined', async () => {
@@ -146,6 +260,21 @@ describe('ensureClaudeDashboardRegistration', () => {
     ]);
   });
 
+  it('does not expose command output when setup fails', async () => {
+    const run = fakeRunner([
+      { stderr: 'No MCP server named "agent-rack".', exitCode: 1 },
+      { exitCode: 1, stderr: 'API_KEY=secret-value' },
+    ]);
+
+    const result = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
+      run,
+      confirm: async () => true,
+    });
+
+    expect(result.warning).toContain('could not add the shared registration');
+    expect(result.warning).not.toContain('secret-value');
+  });
+
   it('returns warnings for a missing Claude binary and command failures', async () => {
     const missing = await ensureClaudeDashboardRegistration('http://127.0.0.1:8987/sse', {
       run: fakeRunner([Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' })]),
@@ -160,6 +289,6 @@ describe('ensureClaudeDashboardRegistration', () => {
       ]),
       confirm: async () => true,
     });
-    expect(failure.warning).toContain('add failed');
+    expect(failure.warning).toContain('could not add the shared registration');
   });
 });

@@ -46,6 +46,22 @@ describe('DashboardRemoteClient', () => {
     );
   });
 
+  it('passes an SDK timeout to cancellation tool calls', async () => {
+    const dashboard = new DashboardRemoteClient('http://127.0.0.1:8987/sse');
+    const callTool = vi.fn(async () => ({
+      content: [{ type: 'text', text: 'cancelled' }],
+    }));
+    (dashboard as unknown as { client: { callTool: typeof callTool } }).client.callTool = callTool;
+
+    await dashboard.cancelSession('session-1');
+
+    expect(callTool).toHaveBeenCalledWith(
+      { name: 'agent_session_cancel', arguments: { sessionId: 'session-1' } },
+      undefined,
+      { timeout: 3000 }
+    );
+  });
+
   it('creates a session, lists it, and reads its logs', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mcp-remote-client-'));
     const echoScript = path.join(dir, 'echo.cjs');

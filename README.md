@@ -44,10 +44,12 @@ scoped to the directory where you ran the command.
 Once the server is reachable, agent-rack checks Claude Code's `agent-rack` MCP registration. If it
 already points at the same SSE URL, nothing changes. If no registration exists, you get a one-time
 confirmation before the dashboard opens; accepting adds it at local scope, and restarting or
-reconnecting Claude Code once applies it. A different existing registration is left untouched
-because Claude Code cannot expose enough detail to restore it losslessly; the dashboard shows the
-scope-aware manual replacement command instead. Declining, a missing Claude CLI, or setup failure
-only shows a dashboard warning.
+reconnecting Claude Code once applies it. A different registration is replaced only after
+confirmation when agent-rack can safely reconstruct it for rollback, preserving its scope. Entries
+with unsupported or unrecoverable settings are left unchanged with scope-aware manual guidance. If
+replacement fails, agent-rack attempts restoration and reports whether it succeeded without exposing
+sensitive configuration. Declining, a missing Claude CLI, or setup failure only shows a dashboard
+warning.
 
 An `AUTO-STARTED` server belongs to the dashboard and stops when the dashboard closes. If it has
 running sessions, the first `q` warns and the second `q` cancels them before shutdown. An
@@ -541,10 +543,12 @@ npx agent-rack@latest dashboard
 ```
 
 The reachable server is then offered as a one-time Claude Code MCP registration update before Ink
-starts. A matching SSE registration is left untouched. If you accept a change, agent-rack
-preserves the effective Claude scope (`local`, `project`, or `user`), replaces the old registration,
-and asks you to restart or reconnect Claude Code once. Declining or setup errors do not block the
-dashboard.
+starts. A matching SSE registration is left untouched. After confirmation, agent-rack replaces a
+different registration only when it can safely reconstruct it for rollback, preserving the effective
+Claude scope (`local`, `project`, or `user`). Registrations with unsupported or unrecoverable settings
+remain unchanged with manual guidance. If replacement fails, agent-rack attempts restoration and
+reports its result without exposing sensitive configuration. Declining or setup errors do not block
+the dashboard.
 
 The footer labels the connection `AUTO-STARTED` or `EXISTING`. Auto-started servers stop with the
 dashboard; when sessions are still running, press `q` once to see the warning and again to cancel
