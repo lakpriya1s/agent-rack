@@ -5,6 +5,24 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.9.0
+
+### Changed
+
+- **`enableSseSidecar` now defaults to `true`.** A stdio-transport process (the default —
+  including the one Claude Code itself spawns) now opens the loopback SSE sidecar introduced in
+  0.8.0 automatically, with no config change required. It is bearer-token gated the same way the
+  standalone `sse` transport is (`security.requireSseAuth`, default `true`), so the marginal
+  exposure over plain stdio is a loopback-only, token-protected listener — not an open port. Set
+  `enableSseSidecar: false` to opt back out to pre-0.9.0 behavior.
+
+### Added
+
+- **The Claude Code plugin ships a `PostToolUse` hook** (`plugins/agent-rack/hooks/`) that fires
+  whenever `agent_session_create` or a `*_run` shortcut launches a background session, nudging
+  the model to start watching its status/tail live instead of relying on it to remember. Anyone
+  with the plugin installed gets this automatically — no `.claude/settings.json` editing required.
+
 ## 0.8.0
 
 ### Added
