@@ -127,3 +127,42 @@ describe('Adapter Factory', () => {
     expect(adapter.transportType).toBe('claude_stream_json');
   });
 });
+
+describe('claude streaming capability', () => {
+  it('reports no streaming under --output-format json, which buffers until exit', () => {
+    // The bug: this was hardcoded true, so a whole multi-turn run advertised progress
+    // visibility while producing exactly one event at exit.
+    const adapter = new ClaudeStreamJsonAdapter(['--output-format', 'json']);
+    expect(adapter.capabilities.supportsStreaming).toBe(false);
+  });
+
+  it('reports streaming under --output-format stream-json', () => {
+    expect(
+      new ClaudeStreamJsonAdapter(['--output-format', 'stream-json', '--verbose']).capabilities
+        .supportsStreaming
+    ).toBe(true);
+  });
+
+  it('accepts the --output-format=stream-json spelling', () => {
+    expect(
+      new ClaudeStreamJsonAdapter(['--output-format=stream-json', '--verbose']).capabilities
+        .supportsStreaming
+    ).toBe(true);
+  });
+
+  it('does not mistake a stream-json input format for output streaming', () => {
+    expect(
+      new ClaudeStreamJsonAdapter(['--input-format', 'stream-json', '--output-format', 'json'])
+        .capabilities.supportsStreaming
+    ).toBe(false);
+  });
+
+  it('keeps the other capabilities fixed regardless of output format', () => {
+    for (const args of [['--output-format', 'json'], ['--output-format', 'stream-json']]) {
+      const caps = new ClaudeStreamJsonAdapter(args).capabilities;
+      expect(caps.supportsFollowUp).toBe(false);
+      expect(caps.supportsNativeReadOnly).toBe(true);
+      expect(caps.promptTransport).toBe('argv');
+    }
+  });
+});

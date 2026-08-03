@@ -31,8 +31,26 @@ export interface EventRingBufferOptions {
  * counting regardless of eviction, so change detection and "give me what's new" both work for
  * the whole life of a session.
  */
+/**
+ * Cheap size estimate for an arbitrary event payload. Returns 0 for absent values, and falls
+ * back to a nominal cost if the value cannot be serialized (a circular structure would
+ * otherwise throw from inside `push`, killing the stream over mere accounting).
+ */
+function approximateJsonSize(value: unknown): number {
+  if (value === undefined || value === null) return 0;
+  if (typeof value === 'string') return value.length;
+  if (typeof value === 'number' || typeof value === 'boolean') return 8;
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return 256;
+  }
+}
+
 export class EventRingBuffer {
   private events: ParsedAgentEvent[] = [];
+  /** Per-event retained size, parallel to `events`, so eviction is O(1) and drift-free. */
+  private sizes: number[] = [];
   private readonly maxEvents: number;
   private readonly maxBytes: number;
   /** Monotonic count of every event ever pushed; also the cursor of the next event. */
@@ -50,15 +68,35 @@ export class EventRingBuffer {
     this.maxBytes = options.maxBytes ?? 5_000_000;
   }
 
+  /**
+   * Approximate retained size of one event.
+   *
+   * `content` is NOT the only thing that matters, which an earlier version assumed: Claude Code's
+   * final `result` message carries a `metadata` object with per-model token counts, costs and
+   * timings that routinely runs to several KB against a few hundred characters of content, and
+   * `input`/`output` on tool events hold whole command payloads. Counting content alone let a
+   * session's real footprint exceed `maxSessionOutputBytes` by an order of magnitude — the cap
+   * held, but it was measuring the wrong thing.
+   */
   private static sizeOf(event: ParsedAgentEvent): number {
-    // Content dominates; the structural fields are a small constant we approximate rather
-    // than serializing every event (which would cost more than the accounting saves).
-    return event.content.length + 128;
+    return (
+      event.content.length +
+      approximateJsonSize(event.metadata) +
+      approximateJsonSize(event.input) +
+      approximateJsonSize(event.output) +
+      (event.toolName?.length ?? 0) +
+      // Object header, type/timestamp fields, and per-event array slot.
+      128
+    );
   }
 
   push(event: ParsedAgentEvent): void {
     this.events.push(event);
-    this.bytes += EventRingBuffer.sizeOf(event);
+    // Sized once here and remembered, so eviction never re-serializes a large payload and the
+    // running total cannot drift from what was added.
+    const size = EventRingBuffer.sizeOf(event);
+    this.sizes.push(size);
+    this.bytes += size;
     this.total += 1;
 
     while (
@@ -67,8 +105,8 @@ export class EventRingBuffer {
     ) {
       // Never evict the only event: a single oversized event still has to be readable.
       if (this.events.length === 1) break;
-      const evicted = this.events.shift()!;
-      this.bytes -= EventRingBuffer.sizeOf(evicted);
+      this.events.shift();
+      this.bytes -= this.sizes.shift() ?? 0;
       this.oldest += 1;
     }
   }

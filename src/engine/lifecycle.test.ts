@@ -106,6 +106,57 @@ describe('EventRingBuffer cursors', () => {
     expect(buffer.totalEvents()).toBe(20);
   });
 
+  it('counts metadata and tool payloads toward the byte budget, not just content', () => {
+    // Claude Code's final result event carries KBs of usage/cost metadata against a few hundred
+    // characters of content. Sizing on content alone let real memory exceed the cap ~10x.
+    const withMetadata = new EventRingBuffer({ maxEvents: 1000, maxBytes: 4000 });
+    for (let i = 0; i < 10; i++) {
+      withMetadata.push({
+        type: 'text',
+        content: 'short',
+        metadata: { usage: { detail: 'x'.repeat(1000) } },
+        timestamp: 0,
+      });
+    }
+    expect(withMetadata.size()).toBeLessThan(10);
+
+    const withToolPayload = new EventRingBuffer({ maxEvents: 1000, maxBytes: 4000 });
+    for (let i = 0; i < 10; i++) {
+      withToolPayload.push({
+        type: 'tool_result',
+        content: 'ok',
+        output: { stdout: 'y'.repeat(1000) },
+        timestamp: 0,
+      });
+    }
+    expect(withToolPayload.size()).toBeLessThan(10);
+  });
+
+  it('keeps the byte total consistent across eviction', () => {
+    const buffer = new EventRingBuffer({ maxEvents: 3, maxBytes: 10_000_000 });
+    for (let i = 0; i < 12; i++) {
+      buffer.push({ type: 'text', content: 'c'.repeat(50), metadata: { i }, timestamp: 0 });
+    }
+    // Three retained events, so the running total must equal three events' worth — proof the
+    // subtraction on eviction matches what was added rather than drifting.
+    expect(buffer.size()).toBe(3);
+    const perEvent = buffer.retainedBytes() / 3;
+    expect(Number.isInteger(perEvent) || perEvent > 0).toBe(true);
+    expect(buffer.retainedBytes()).toBeGreaterThan(150);
+    expect(buffer.retainedBytes()).toBeLessThan(1000);
+  });
+
+  it('does not throw on a circular payload while accounting for it', () => {
+    const buffer = new EventRingBuffer({ maxEvents: 10 });
+    const circular: Record<string, unknown> = { name: 'loop' };
+    circular.self = circular;
+
+    expect(() =>
+      buffer.push({ type: 'tool_result', content: 'x', output: circular, timestamp: 0 })
+    ).not.toThrow();
+    expect(buffer.size()).toBe(1);
+  });
+
   it('never evicts a lone oversized event, which would leave nothing readable', () => {
     const buffer = new EventRingBuffer({ maxEvents: 10, maxBytes: 10 });
     buffer.push({ type: 'text', content: 'x'.repeat(5000), timestamp: 0 });

@@ -5,6 +5,35 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.7.1
+
+Two honesty/correctness fixes found by actually running 0.7.0 through the Claude Code plugin.
+
+### Fixed
+
+- **`supportsStreaming` no longer claims streaming the config doesn't provide.** It was hardcoded
+  `true` for the `claude_stream_json` transport, but Claude Code only emits incremental events
+  under `--output-format stream-json`. With the default `--output-format json` it buffers the whole
+  run and emits one JSON object at exit — so a five-turn task produced a single event and
+  `agent_session_logs` stayed empty the entire time it was working. The flag is now derived from
+  the configured args (both `--output-format stream-json` and `--output-format=stream-json` are
+  recognized). The default output format is unchanged: `stream-json` additionally requires
+  `--verbose` and alters the event shape that `agent_review`'s JSON extraction depends on, so
+  switching it is not a patch-level change.
+- **The session log byte budget now measures the whole event.** `security.maxSessionOutputBytes`
+  was computed from `content.length` alone, ignoring `metadata`, `input`, and `output`. Claude
+  Code's final result event carries several KB of token/cost metadata against a few hundred
+  characters of content, and tool events hold entire command payloads — so a session's real
+  retained footprint could exceed the configured cap by roughly an order of magnitude. Sizes are
+  now computed once per event and remembered, so eviction cannot drift from what was added, and a
+  circular payload is accounted for rather than throwing mid-stream.
+
+### Note
+
+Version-pinning `plugins/agent-rack/.mcp.json` does not fully guarantee which build runs: `npx`
+prefers an `agent-rack` already on `$PATH`, so a stale global install shadows the pin. If you have
+one, upgrade it (`npm i -g agent-rack@latest`) or point the plugin at an absolute path.
+
 ## 0.7.0
 
 A security and correctness release. Several previously-advertised capabilities did not match

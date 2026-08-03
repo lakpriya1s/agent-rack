@@ -26,6 +26,21 @@ const CLAUDE_PERMISSION_MODES = new Set([
   'plan',
 ]);
 
+/**
+ * Whether these args make Claude Code emit incremental events.
+ *
+ * Accepts both `--output-format stream-json` and `--output-format=stream-json`. Note the CLI
+ * additionally requires `--verbose` for this combination, so args that request stream-json
+ * without it will not actually run — the check is deliberately about intent, since a config that
+ * cannot start is a separate, loud failure.
+ */
+export function claudeArgsStream(args: string[]): boolean {
+  return args.some((arg, index) => {
+    if (arg === '--output-format') return args[index + 1] === 'stream-json';
+    return arg === '--output-format=stream-json';
+  });
+}
+
 export class ClaudeStreamJsonAdapter implements AgentAdapter {
   readonly transportType = 'claude_stream_json';
 
@@ -33,17 +48,26 @@ export class ClaudeStreamJsonAdapter implements AgentAdapter {
    * The prompt is a positional argv argument and the process exits when the turn ends, so
    * there is no second turn to send follow-up input to. `--permission-mode plan` does give a
    * genuine read-only run.
+   *
+   * `supportsStreaming` is derived from the configured args rather than hardcoded, because this
+   * transport only streams under `--output-format stream-json`. With the default
+   * `--output-format json`, Claude Code buffers the entire run and emits one JSON object at
+   * exit — so a whole multi-turn task produces a single event and `agent_session_logs` stays
+   * empty until it finishes. Reporting `true` there advertised progress visibility that does
+   * not exist.
    */
-  readonly capabilities: AgentCapabilities = {
-    supportsFollowUp: false,
-    supportsStreaming: true,
-    supportsNativeReadOnly: true,
-    promptTransport: 'argv',
-  };
+  readonly capabilities: AgentCapabilities;
 
   private buffer = '';
 
-  constructor(private defaultArgs: string[] = ['--output-format', 'json']) {}
+  constructor(private defaultArgs: string[] = ['--output-format', 'json']) {
+    this.capabilities = {
+      supportsFollowUp: false,
+      supportsStreaming: claudeArgsStream(defaultArgs),
+      supportsNativeReadOnly: true,
+      promptTransport: 'argv',
+    };
+  }
 
   getCLIArgs(prompt: string, mode?: string): string[] {
     const args = [...this.defaultArgs];
