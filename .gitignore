@@ -9,6 +9,7 @@ dist/
 
 # Local runtime config — copy agent-rack.config.example.json and edit
 agent-rack.config.json
+agent-rack.config.json.bak
 
 # Graphify output directories — generated locally by graphify
 graphify-out/

@@ -84,6 +84,17 @@ agent-rack install --target claude
 > (`~/Library/Application Support/Claude/claude_desktop_config.json`). On other platforms, run
 > `agent-rack snippet claude-desktop` and paste the printed JSON into your config by hand.
 
+### Adding another client later
+
+None of this is a one-time-only step. `install --target <x>` and `setup` are both safe to run
+again at any point after your first install — each target's registration is independent, so
+adding Cursor six months after you set up Claude Code doesn't touch Claude Code's registration at
+all, and re-running the same target is idempotent (it just confirms/repairs that one entry).
+There's nothing to migrate and no shared state between clients to keep in sync — every client
+still resolves the same `agent-rack.config.json` (see [Configuration](#configuration)), it's only
+*which clients know to spawn agent-rack* that changes. Just restart the newly-registered client
+afterward to pick up the tools.
+
 ## Requirements
 
 - **Node.js 20+**
@@ -437,6 +448,37 @@ cp agent-rack.config.example.json agent-rack.config.json
 | `security.maxRetainedSessions` | Hard cap on retained finished sessions, oldest pruned first (default `200`) |
 | `security.maxSessionOutputBytes` | Byte budget for one session's retained event log (default `5000000`) |
 
+### Adding another agent profile
+
+`agents` is a plain map — nothing stops you from adding a *second* entry for a CLI you've
+already configured, with a different `model`, `args`, or `name`, to get a distinct tool for a
+distinct use case. Each key becomes its own `<key>_run` shortcut automatically (see
+[Shortcut tools](#shortcut-tools)), so this is how you get e.g. a "fast" and a "high-reasoning"
+version of the same underlying CLI without touching any code:
+
+```json
+{
+  "agents": {
+    "codex": { "...": "your existing entry, unchanged" },
+    "codex-high": {
+      "name": "Codex CLI (high reasoning)",
+      "command": "codex",
+      "args": ["exec", "--json", "--skip-git-repo-check"],
+      "transport": "codex_exec_json",
+      "model": "gpt-5.5-high",
+      "description": "Codex pinned to high-reasoning effort for harder tasks"
+    }
+  }
+}
+```
+
+`codex-high_run` now shows up alongside `codex_run`, and `agent_run`/`agent_session_create` both
+accept `"agent": "codex-high"` too. This works for any field on `AgentConfig` — a different
+`inheritEnv` allowlist, a different working set of `args`, or an entirely different `command`
+pointed at another install of the same CLI. Edit `agent-rack.config.json` (see
+[`config init`](#config-init) if you don't have one yet) and restart your MCP client — config is
+read once at process start, so there's no live reload.
+
 ## Security model
 
 Read this before pointing agent-rack at anything you care about.
@@ -770,12 +812,21 @@ installed — it reports "nothing to remove"/"no automatic removal" instead of f
 ### `config init`
 
 ```sh
-agent-rack config init [-p, --path ./agent-rack.config.json]
+agent-rack config init [-p, --path ./agent-rack.config.json] [-g, --global]
 ```
 
-Writes a real config scoped to your current directory — all four default agents pre-filled
-with their actual CLI flags, `allowedWorkspaces` set to `process.cwd()` (not a placeholder).
-Only needed if you're customizing something (see [Configuration](#configuration)).
+Writes a real config — all four default agents pre-filled with their actual CLI flags. By
+default it's scoped to your current directory (`allowedWorkspaces: [process.cwd()]`, not a
+placeholder) and written to `./agent-rack.config.json`, for customizing one project. Only needed
+if you're customizing something (see [Configuration](#configuration)).
+
+Pass `--global` instead to write `~/.config/agent-rack/config.json` — the third entry in the
+[resolution order](#configuration), used by any project that has no config file of its own.
+`allowedWorkspaces` is scoped to your home directory in that case (covering every project under
+it, since a global config has no single project to bind to), not the directory you happened to
+run the command from. `--global` and an explicit `--path` are mutually exclusive. Remember that a
+project-local `./agent-rack.config.json` always wins over the global one, so adding a project
+config later effectively "unsubscribes" that project from the global one.
 
 ### `config-check`
 

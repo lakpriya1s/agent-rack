@@ -5,6 +5,18 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.10.0
+
+### Added
+
+- **`agent-rack config init --global`** writes `~/.config/agent-rack/config.json` (the third
+  entry in the config resolution order) instead of a project-local file, with
+  `allowedWorkspaces` scoped to your home directory rather than the current project — the
+  previous default of `getDefaultConfig(process.cwd())` made a manually-relocated global config
+  scoped to whatever directory happened to be current when you ran the command, which wasn't
+  useful for a config meant to apply broadly. `--global` and an explicit `--path` are mutually
+  exclusive. README documents that a project-local config still always takes precedence.
+
 ## 0.9.0
 
 ### Changed

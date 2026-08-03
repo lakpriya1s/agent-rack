@@ -622,10 +622,36 @@ export function runCLI() {
     .command('init')
     .description('Initialize a new starter agent-rack.config.json file')
     .option('-p, --path <path>', 'Output file path', './agent-rack.config.json')
+    .option(
+      '-g, --global',
+      'Write to the global config path (~/.config/agent-rack/config.json) instead, scoped to ' +
+        'your home directory rather than the current project — used by any project with no ' +
+        'config file of its own'
+    )
     .action((options) => {
-      const config = getDefaultConfig(process.cwd());
-      saveConfig(config, options.path);
-      console.log(`Created starter configuration file at: ${path.resolve(options.path)}`);
+      if (options.global && options.path !== './agent-rack.config.json') {
+        console.error('Cannot combine --global with an explicit --path.');
+        process.exit(1);
+        return;
+      }
+
+      const targetPath = options.global
+        ? path.resolve(os.homedir(), '.config', 'agent-rack', 'config.json')
+        : options.path;
+      // A local project config should scope to that project; a global one covers every project
+      // under your home directory instead, since it has no single project to bind to.
+      const config = getDefaultConfig(options.global ? os.homedir() : process.cwd());
+
+      saveConfig(config, targetPath);
+      console.log(
+        `Created starter ${options.global ? 'global ' : ''}configuration file at: ${path.resolve(targetPath)}`
+      );
+      if (options.global) {
+        console.log(
+          'Note: a project-local ./agent-rack.config.json always takes precedence over this ' +
+            'file when one exists.'
+        );
+      }
     });
 
   program
