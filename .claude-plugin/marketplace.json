@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Claude Code plugin for agent-rack — run any CLI coding agent as an MCP tool, plus structured code review.",
-    "version": "0.7.1"
+    "version": "0.8.0"
   },
   "plugins": [
     {
       "name": "agent-rack",
       "description": "Run claude, codex, opencode, Antigravity, or any CLI coding agent as MCP tools from Claude Code, plus structured read-only code review.",
-      "version": "0.7.1",
+      "version": "0.8.0",
       "author": {
         "name": "Lakpriya Senevirathna"
       },

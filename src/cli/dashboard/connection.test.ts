@@ -1,6 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { getDefaultConfig } from '../../config/loader.js';
 import { formatDashboardConnectionFailure, resolveDashboardServerUrl } from './connection.js';
+
+// `readLocalToken` reads a real file under the user's home directory, which may or may not
+// exist depending on whether an agent-rack server happens to be running locally at test time
+// (e.g. this project's own SSE sidecar on the default port). Stubbing it keeps these assertions
+// about URL resolution independent of that machine-local state.
+vi.mock('../../security/auth.js', () => ({ readLocalToken: () => undefined }));
 
 describe('resolveDashboardServerUrl', () => {
   it('uses 8987 as the generated config and dashboard default', () => {

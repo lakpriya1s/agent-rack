@@ -1,6 +1,6 @@
 {
   "name": "agent-rack",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Model Context Protocol (MCP) Server for running agy, claude, opencode, and CLI AI coding agents as tools",
   "type": "module",
   "main": "./dist/index.js",

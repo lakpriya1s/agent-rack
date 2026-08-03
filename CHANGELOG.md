@@ -5,6 +5,18 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.8.0
+
+### Added
+
+- **Opt-in SSE sidecar for the stdio transport.** Setting `enableSseSidecar: true` makes a
+  stdio-transport process (the default — e.g. the process Claude Code itself spawns) also open a
+  loopback SSE listener on the exact same shared `SessionManager`, best-effort and non-fatal if
+  the port is already taken. Sessions created over the stdio connection are then visible to any
+  other local client — the dashboard, `agent-rack session status/tail`, or a polling shell
+  loop — with no separate server to run and no change to the stdio client's own MCP registration.
+  Defaults to `false`; existing configs and behavior are unchanged unless you opt in.
+
 ## 0.7.1
 
 Two honesty/correctness fixes found by actually running 0.7.0 through the Claude Code plugin.
