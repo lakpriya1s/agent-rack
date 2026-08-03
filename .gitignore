@@ -9,3 +9,9 @@ dist/
 
 # Local runtime config — copy agent-mcp.config.example.json and edit
 agent-mcp.config.json
+
+# Graphify output directories — generated locally by graphify
+graphify-out/
+
+# Personal Claude Code overrides (hooks, permissions) — not team-shared
+/.claude/settings.local.json
