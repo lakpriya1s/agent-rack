@@ -281,6 +281,11 @@ and examples.
 | `/agent-rack:agents` | `agent_list_available` | List configured agents and `$PATH` availability |
 | `/agent-rack:setup` | — | Verify the MCP server is actually connected; troubleshoot if not |
 
+The plugin also ships a `PostToolUse` hook (`plugins/agent-rack/hooks/`) with no command of its
+own: every time `agent_session_create` or a `*_run` shortcut launches a background session, it
+nudges Claude to start watching that session's status/tail live, instead of relying on the model
+remembering to check back. Nothing to configure — installing the plugin is enough.
+
 ### Guidance skills — 2, auto-activated
 
 These aren't slash commands — they're model-invoked (`user-invocable: false`), meaning Claude
@@ -419,7 +424,8 @@ cp agent-rack.config.example.json agent-rack.config.json
 | Key | Description |
 | --- | --- |
 | `transport` | `stdio` (default, for per-client local IDE integration) or `sse` (localhost HTTP-SSE, for a shared server and dashboard) |
-| `port` | HTTP port when `transport` is `sse` (default `8987`) |
+| `port` | HTTP port when `transport` is `sse`, or for the sidecar below (default `8987`) |
+| `enableSseSidecar` | When `transport` is `stdio` (the default), also open a loopback SSE listener on the same session state, so `agent-rack session status/tail` and the dashboard can observe sessions created over the stdio connection with no separate server. Default `true`; same bearer-token protection as `security.requireSseAuth`. Set `false` to opt out. |
 | `allowedWorkspaces` | Absolute directory paths agents may be **launched in**. Every tool call resolves symlinks and validates against this list before any subprocess spawns. See the caveat under [Security model](#security-model) — this constrains the working directory, not everything the process can reach. |
 | `agents` | Map of agent id → `{ name, command, args, transport, env, description, model, inheritEnv }` |
 | `security.executionPolicy` | `read-only` \| `workspace-write` (default) \| `danger-full-access`. See [Execution policy](#execution-policy). |
@@ -556,9 +562,16 @@ agent-rack start [-c, --config <path>] [-t, --transport stdio|sse] [-p, --port <
 
 Starts the MCP server. `--transport` defaults to `stdio` (or `config.transport`); for `sse`,
 `--port` uses `config.port` when set and otherwise defaults to `8987`. SSE listens only on the IPv4
-loopback interface and is reachable at `http://localhost:<port>/sse`; it is not remotely exposed
-and has no authentication. MCP clients can launch the stdio transport themselves; the dashboard
-command can also start a temporary shared SSE server in-process.
+loopback interface and is reachable at `http://localhost:<port>/sse`; it is not remotely exposed,
+and requires a bearer token by default (see [SSE authentication](#sse-authentication)).
+
+**A `stdio` process also opens that same SSE endpoint by default** (`enableSseSidecar: true`,
+best-effort — a bind failure just falls back to stdio-only). This means the MCP client that
+spawned it — Claude Code, Cursor, whatever — keeps talking over stdio as always, but every
+session it creates is *also* immediately visible to `agent-rack session status/tail`, the
+dashboard, or a polling shell loop, with nothing else to start and no change to how that client
+is registered. Set `enableSseSidecar: false` to go back to a stdio process being unobservable
+from outside, like before this existed.
 
 ### `setup`
 
@@ -652,22 +665,35 @@ starts an in-process loopback SSE server itself:
 npx agent-rack@latest dashboard
 ```
 
-The reachable server is then offered as a one-time Claude Code MCP registration update before Ink
-starts. A matching SSE registration is left untouched. After confirmation, agent-rack replaces a
-different registration only when it can safely reconstruct it for rollback, preserving the effective
-Claude scope (`local`, `project`, or `user`). Registrations with unsupported or unrecoverable settings
-remain unchanged with manual guidance. If replacement fails, agent-rack attempts restoration and
-reports its result without exposing sensitive configuration. Declining or setup errors do not block
-the dashboard.
+Since a `stdio` process opens the same SSE endpoint by default (`enableSseSidecar`, see
+[`start`](#start)), the "compatible existing server" case is now the common one: if any MCP
+client — Claude Code, Cursor, whatever — already has agent-rack running against this project, the
+dashboard just attaches to its sidecar and shows exactly what that client is doing, live, with
+nothing auto-started. It only falls back to starting its own server when nothing is listening yet
+(e.g. no client has launched agent-rack for this project in this session, or `enableSseSidecar` is
+turned off).
+
+When it does attach to (or start) a server, it's offered as a one-time Claude Code MCP
+registration update before Ink starts — this repoints Claude Code's own connection to that exact
+SSE endpoint instead of a private stdio one. With the sidecar on by default this is now optional
+rather than required for visibility (stdio already shares state via its sidecar); it remains
+useful mainly for forcing Claude Code onto one specific server URL, e.g. across machines or a
+non-default port. A matching SSE registration is left untouched. After confirmation, agent-rack
+replaces a different registration only when it can safely reconstruct it for rollback, preserving
+the effective Claude scope (`local`, `project`, or `user`). Registrations with unsupported or
+unrecoverable settings remain unchanged with manual guidance. If replacement fails, agent-rack
+attempts restoration and reports its result without exposing sensitive configuration. Declining or
+setup errors do not block the dashboard.
 
 The footer labels the connection `AUTO-STARTED` or `EXISTING`. Auto-started servers stop with the
 dashboard; when sessions are still running, press `q` once to see the warning and again to cancel
-those sessions and exit. Existing-server sessions are never cancelled just because this dashboard
-closes.
+those sessions and exit. Existing-server sessions — including a sidecar owned by some other
+client's stdio process — are never cancelled just because this dashboard closes.
 
-Only sessions created through the shared SSE server appear together. After Claude Code reconnects
-to the offered URL, its background `agent_session_*` work is visible live in the dashboard. A
-private stdio registration remains separate.
+Only sessions created through the shared SSE server appear together. With `enableSseSidecar`
+default-on, that now includes stdio clients automatically; it stays separate only if that client
+disabled its sidecar, or is a different agent-rack process entirely (different config, different
+port).
 
 `--connect <url>` is advanced external-server mode. It overrides config discovery and never
 auto-starts, stops, or takes ownership of the target:
@@ -696,9 +722,13 @@ agent-rack session list [--connect <url>] [--json]
 The dashboard above is for a human watching a terminal. These are the scriptable equivalent —
 plain, non-interactive commands for polling a background `agent_session_*` session from a shell
 script, e.g. a Claude Code `Monitor` loop babysitting a long-running task the same way you'd
-babysit a PR's CI. Like `dashboard --connect`, they only poll an already-running `sse`-transport
-server and never auto-start, stop, or take ownership of it; if none is reachable they exit `1`
-with a pointer to `agent-rack start --transport sse` or `agent-rack dashboard`.
+babysit a PR's CI. They only poll an already-running SSE endpoint and never auto-start, stop, or
+take ownership of it — but since a `stdio` process opens one by default (`enableSseSidecar`, see
+[`start`](#start)), that's usually already true with zero setup: if any MCP client has agent-rack
+running for this project, `agent-rack session status <id>` just connects, no `--connect` flag
+needed. If none is reachable — `enableSseSidecar` is off, or nothing has started agent-rack for
+this project yet — they exit `1` with a pointer to `agent-rack start --transport sse` or
+`agent-rack dashboard`.
 
 These commands read the server's auth token from `~/.config/agent-rack/runtime/sse-<port>.json`
 automatically. For a server running elsewhere, set `AGENT_RACK_TOKEN` or append `?token=<token>`
@@ -819,6 +849,14 @@ start. Restart the client (or reconnect the MCP server) after running `install`.
 call targets isn't in your resolved `allowedWorkspaces`. Run `agent-rack config-check` to
 see what's actually resolved, and `agent-rack config init` from the directory you want
 allowed.
+
+**A plugin/`npx` connection keeps running an old version** — `npx -y agent-rack@X start` prefers
+an `agent-rack` binary already resolvable on `$PATH` over fetching `@X` fresh, so a stale global
+install silently shadows the pin (you'll see the *requested* version in the process list, e.g.
+`npm exec agent-rack@0.9.0 start`, while the code that actually runs is whatever's installed
+globally). Check with `agent-rack --version`; if it doesn't match, run
+`npm install -g agent-rack@latest` (or `npm uninstall -g agent-rack` if you don't want a global
+install at all), then restart the client.
 
 **`node-pty` fails to build during install** — it ships prebuilt binaries for common platforms;
 if none match yours, npm falls back to compiling from source, which needs a working C++

@@ -1,0 +1,17 @@
+{
+  "description": "Nudges Claude to start a Monitor watching newly-launched agent-rack background sessions, so a human sees live progress without relying on the model remembering to do it.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__agent-rack__agent_session_create|mcp__agent-rack__agent_run|mcp__agent-rack__claude_run|mcp__agent-rack__codex_run|mcp__agent-rack__opencode_run|mcp__agent-rack__agy_run|mcp__plugin_agent-rack_agent-rack__agent_session_create|mcp__plugin_agent-rack_agent-rack__agent_run|mcp__plugin_agent-rack_agent-rack__claude_run|mcp__plugin_agent-rack_agent-rack__codex_run|mcp__plugin_agent-rack_agent-rack__opencode_run|mcp__plugin_agent-rack_agent-rack__agy_run",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/monitor-nudge.sh\" 2>/dev/null || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

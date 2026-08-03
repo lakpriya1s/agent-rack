@@ -79,8 +79,12 @@ export const AgentMCPConfigSchema = z.object({
    * dashboard, `agent-rack session status/tail`, and any other local client observe sessions
    * created over the stdio connection (e.g. by Claude Code) with no separate server and no
    * change to the stdio client's own registration. Has no effect when transport is `sse`.
+   *
+   * Defaults to true: the sidecar only opens on loopback and is bearer-token gated (same
+   * protections as `security.requireSseAuth`), so the marginal exposure is small next to the
+   * observability every stdio-mode user gets for free. Set false to opt out entirely.
    */
-  enableSseSidecar: z.boolean().default(false),
+  enableSseSidecar: z.boolean().default(true),
   allowedWorkspaces: z.array(z.string()).min(1),
   agents: z.record(z.string(), AgentConfigSchema).default({}),
   security: SecurityConfigSchema.default({

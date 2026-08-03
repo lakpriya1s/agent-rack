@@ -17,6 +17,10 @@ adds slash commands for every capability it exposes.
   start a long-running task, poll it, send follow-up input, tail its raw event log, or cancel it.
 - `/agent-rack:agents` — list configured agents and whether each binary is on `$PATH`.
 - `/agent-rack:setup` — verify the MCP server is actually connected and troubleshoot if not.
+- **Automatic progress monitoring** — every time a background session is launched
+  (`agent_session_create`, or a `*_run` shortcut called with `background: true`), a bundled hook
+  nudges Claude to start watching its status/tail live, so you see progress in the chat without
+  having to ask.
 
 Every command is a thin wrapper over agent-rack's own MCP tools (`agent_run`, `agent_review`,
 `agent_session_*`, `agent_list_available`) — this plugin doesn't duplicate any logic, it just
