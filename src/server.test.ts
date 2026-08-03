@@ -7,6 +7,7 @@ import {
   createServerContextFromConfig,
   startAgentMCPServer,
   startSSEServer,
+  startSseSidecar,
   type ManagedAgentMCPServer,
 } from './server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -162,6 +163,64 @@ describe('loaded-config SSE server API', () => {
           new Promise((_, reject) => setTimeout(() => reject(new Error('listen timed out')), 500)),
         ])
       ).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    } finally {
+      await new Promise<void>((resolve) => occupied.close(() => resolve()));
+    }
+  });
+});
+
+describe('SSE sidecar (stdio + observability)', () => {
+  it('shares the same session state as the stdio context it was started alongside', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-rack-sidecar-'));
+    const config = getDefaultConfig(dir);
+    config.agents['echoer'] = {
+      name: 'Echoer',
+      command: 'node',
+      args: ['-e', "setInterval(() => {}, 1000)"],
+      transport: 'claude_stream_json',
+      env: {},
+    };
+    const ctx = createServerContextFromConfig(config);
+    // A session created as if by a stdio-connected client (e.g. Claude Code) ...
+    const session = ctx.sessionManager.createSession('echoer', 'echo hi', dir);
+
+    const handle = await startSseSidecar(ctx, 0);
+    expect(handle).toBeDefined();
+
+    const client = new Client({ name: 'sidecar-test', version: '1.0.0' }, { capabilities: {} });
+    try {
+      await client.connect(new SSEClientTransport(new URL(handle!.url), sseTransportInit(handle!.token)));
+      // ... is visible to an independently connected SSE client hitting the same sidecar.
+      const result = await client.callTool({
+        name: 'agent_session_status',
+        arguments: { sessionId: session.id },
+      });
+      const text = (result.content as Array<{ type: string; text?: string }>)
+        .map((c) => c.text)
+        .join('');
+      expect(text).toContain(session.id);
+    } finally {
+      await client.close();
+      await handle!.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is best-effort: a port already in use is logged and swallowed, not thrown', async () => {
+    const occupied = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      occupied.once('error', reject);
+      occupied.listen(0, '127.0.0.1', resolve);
+    });
+    const port = (occupied.address() as AddressInfo).port;
+
+    try {
+      const ctx = createServerContextFromConfig(getDefaultConfig());
+      const handle = await Promise.race([
+        startSseSidecar(ctx, port),
+        new Promise<undefined>((_, reject) => setTimeout(() => reject(new Error('timed out')), 500)),
+      ]);
+      expect(handle).toBeUndefined();
     } finally {
       await new Promise<void>((resolve) => occupied.close(() => resolve()));
     }

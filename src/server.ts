@@ -280,6 +280,44 @@ function installShutdownCleanup(handle: AgentMCPHTTPServer): void {
   process.once('exit', () => removeTokenFile(boundPort));
 }
 
+/**
+ * Best-effort SSE sidecar for a stdio-transport process: same shared `ctx` (and therefore the
+ * same `SessionManager`), so sessions created over stdio are visible to any client that connects
+ * over SSE — the dashboard, `agent-rack session status/tail`, or a polling shell loop — with no
+ * separate server to start and no change to the stdio client's own registration.
+ *
+ * A bind failure (e.g. another agent-rack instance already owns this port) is logged and
+ * swallowed rather than thrown: the stdio connection this process was spawned to serve must keep
+ * working regardless of whether the sidecar came up.
+ */
+export async function startSseSidecar(
+  ctx: AgentMCPServerContext,
+  port: number
+): Promise<AgentMCPHTTPServer | undefined> {
+  try {
+    const handle = await startSSEServer(ctx, port);
+    console.error(`Agent-MCP SSE sidecar also listening: ${handle.url}`);
+    if (handle.token) {
+      // The token file is keyed by the *bound* port, which differs from `port` whenever 0
+      // was requested to get an ephemeral one — same reasoning as startSSEServer's own publish.
+      const boundPort = (handle.server.address() as { port: number }).port;
+      console.error(
+        `SSE authentication is enabled. 'agent-rack session status/tail' and the dashboard read ` +
+          `the token from ${tokenFilePath(boundPort)} automatically — no --connect needed.`
+      );
+    }
+    installShutdownCleanup(handle);
+    return handle;
+  } catch (error) {
+    console.error(
+      `Warning: could not start the SSE sidecar on port ${port} (${
+        error instanceof Error ? error.message : String(error)
+      }). Continuing with stdio only.`
+    );
+    return undefined;
+  }
+}
+
 export async function startAgentMCPServer(
   options: { configPath?: string; transport?: 'stdio' | 'sse'; port?: number } = {}
 ): Promise<ManagedAgentMCPServer | undefined> {
@@ -324,6 +362,9 @@ export async function startAgentMCPServer(
     const transport = new StdioServerTransport();
     await server.connect(transport);
     console.error('Agent-MCP Server running on stdio');
+    if (ctx.config.enableSseSidecar) {
+      await startSseSidecar(ctx, targetPort);
+    }
     return undefined;
   }
 }

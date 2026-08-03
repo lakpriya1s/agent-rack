@@ -7,8 +7,8 @@ dist/
 # Local editor / MCP client wiring (contains absolute machine paths)
 .gemini/
 
-# Local runtime config — copy agent-mcp.config.example.json and edit
-agent-mcp.config.json
+# Local runtime config — copy agent-rack.config.example.json and edit
+agent-rack.config.json
 
 # Graphify output directories — generated locally by graphify
 graphify-out/

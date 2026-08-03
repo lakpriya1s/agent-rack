@@ -73,6 +73,14 @@ export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 export const AgentMCPConfigSchema = z.object({
   port: z.number().int().positive().optional(),
   transport: z.enum(['stdio', 'sse']).default('stdio'),
+  /**
+   * When running as `stdio` (the default), also open a loopback SSE listener on the same
+   * shared session state — best-effort, non-fatal if the port is taken. This lets the
+   * dashboard, `agent-rack session status/tail`, and any other local client observe sessions
+   * created over the stdio connection (e.g. by Claude Code) with no separate server and no
+   * change to the stdio client's own registration. Has no effect when transport is `sse`.
+   */
+  enableSseSidecar: z.boolean().default(false),
   allowedWorkspaces: z.array(z.string()).min(1),
   agents: z.record(z.string(), AgentConfigSchema).default({}),
   security: SecurityConfigSchema.default({
