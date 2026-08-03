@@ -2,7 +2,13 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { createAgentMCPServer, createServerContextFromConfig, startAgentMCPServer, startSSEServer } from './server.js';
+import {
+  createAgentMCPServer,
+  createServerContextFromConfig,
+  startAgentMCPServer,
+  startSSEServer,
+  type ManagedAgentMCPServer,
+} from './server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
@@ -10,8 +16,9 @@ import type { AddressInfo } from 'net';
 import type http from 'http';
 import net from 'net';
 import { getDefaultConfig } from './config/loader.js';
+import { sseTransportInit } from './security/auth.js';
 
-let runningServer: http.Server | undefined;
+let runningServer: ManagedAgentMCPServer | undefined;
 
 afterEach(async () => {
   if (!runningServer) return;
@@ -64,7 +71,7 @@ describe('loaded-config SSE server API', () => {
 
     const client = new Client({ name: 'loaded-config-test', version: '1.0.0' }, { capabilities: {} });
     try {
-      await client.connect(new SSEClientTransport(new URL(handle.url)));
+      await client.connect(new SSEClientTransport(new URL(handle.url), sseTransportInit(handle.token)));
       expect((await client.listTools()).tools.length).toBeGreaterThan(0);
     } finally {
       await client.close();
@@ -196,8 +203,9 @@ describe('multi-client SSE support', () => {
       expect(address.address).toBe('127.0.0.1');
       const url = new URL(`http://localhost:${address.port}/sse`);
 
-      await clientA.connect(new SSEClientTransport(url));
-      await clientB.connect(new SSEClientTransport(url));
+      const transportInit = sseTransportInit(runningServer!.agentRackToken);
+      await clientA.connect(new SSEClientTransport(url, transportInit));
+      await clientB.connect(new SSEClientTransport(url, transportInit));
 
       const createdResult = await clientA.callTool({
         name: 'agent_session_create',

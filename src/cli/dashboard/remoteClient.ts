@@ -1,7 +1,8 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import type { ParsedAgentEvent } from '../../adapters/base.js';
-import type { AgentSessionInfo, SessionKind } from '../../engine/session.js';
+import { sseTransportInit } from '../../security/auth.js';
+import type { BufferedEventPage } from '../../engine/buffer.js';
+import type { AgentSessionInfo } from '../../engine/session.js';
 
 export interface DashboardLaunchMetadata {
   agents: string[];
@@ -33,14 +34,18 @@ export class DashboardRemoteClient {
   private connected = false;
   private transport?: SSEClientTransport;
 
-  constructor(private readonly serverUrl: string) {
+  constructor(
+    private readonly serverUrl: string,
+    private readonly token?: string
+  ) {
     this.client = new Client({ name: 'agent-rack-dashboard', version: '1.0.0' }, { capabilities: {} });
   }
 
   async connect(): Promise<void> {
     if (this.connected) return;
 
-    const transport = new SSEClientTransport(new URL(this.serverUrl));
+    // The token must be on both the SSE handshake and every POST back to /message.
+    const transport = new SSEClientTransport(new URL(this.serverUrl), sseTransportInit(this.token));
     this.transport = transport;
     try {
       await this.client.connect(transport);
@@ -118,10 +123,24 @@ export class DashboardRemoteClient {
     return JSON.parse(await this.callTool('agent_session_status', { sessionId }));
   }
 
-  async getSessionLogs(sessionId: string, offset = 0, limit?: number): Promise<ParsedAgentEvent[]> {
-    const args: Record<string, unknown> = { sessionId, offset };
+  /**
+   * Events at or after `cursor`, plus the cursor to resume from. Cursors are monotonic and
+   * survive buffer eviction, so a poller never silently stalls the way an array offset did
+   * once the retained window filled up.
+   */
+  async getSessionLogs(sessionId: string, cursor = 0, limit?: number): Promise<BufferedEventPage> {
+    const args: Record<string, unknown> = { sessionId, cursor };
     if (limit !== undefined) args.limit = limit;
     return JSON.parse(await this.callTool('agent_session_logs', args));
+  }
+
+  /** The most recent `count` events, for a tail view that does not track cursors itself. */
+  async getSessionLogTail(sessionId: string, count: number): Promise<BufferedEventPage> {
+    return JSON.parse(await this.callTool('agent_session_logs', { sessionId, tail: count }));
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.callTool('agent_session_delete', { sessionId });
   }
 
   async sendInput(sessionId: string, message: string): Promise<void> {
@@ -132,15 +151,37 @@ export class DashboardRemoteClient {
     await this.callTool('agent_session_cancel', { sessionId });
   }
 
+  /**
+   * Starts a background task session. There is deliberately no `kind` argument: only
+   * `agent_review` can create a review session, because only it applies the read-only
+   * protections a review implies.
+   */
   async createSession(
     agent: string,
     prompt: string,
     workspace: string,
-    kind: SessionKind,
     model?: string
   ): Promise<AgentSessionInfo> {
-    const args: Record<string, unknown> = { agent, prompt, workspace, kind };
+    const args: Record<string, unknown> = { agent, prompt, workspace };
     if (model) args.model = model;
     return JSON.parse(await this.callTool('agent_session_create', args));
+  }
+
+  /**
+   * Starts a background review via `agent_review`, which is the only path that applies the
+   * read-only mode, strips escape-hatch flags, and runs the git precheck. The dashboard used to
+   * get a review session by passing `kind: 'review'` to agent_session_create, which produced a
+   * session merely *labelled* a review while running with full write authority.
+   */
+  async createReview(
+    agent: string,
+    workspace: string,
+    options: { adversarial?: boolean; focus?: string; model?: string } = {}
+  ): Promise<AgentSessionInfo> {
+    const args: Record<string, unknown> = { agent, workspace, background: true };
+    if (options.adversarial) args.adversarial = true;
+    if (options.focus) args.focus = options.focus;
+    if (options.model) args.model = options.model;
+    return JSON.parse(await this.callTool('agent_review', args));
   }
 }

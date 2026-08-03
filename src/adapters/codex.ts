@@ -1,17 +1,29 @@
-import { AgentAdapter, ParsedAgentEvent, FormattedResult, appendToolCallsBlock } from './base.js';
+import {
+  AgentAdapter,
+  AgentCapabilities,
+  ParsedAgentEvent,
+  FormattedResult,
+  appendToolCallsBlock,
+  describeEmptyResult,
+} from './base.js';
 
 export class CodexExecJsonAdapter implements AgentAdapter {
   readonly transportType = 'codex_exec_json';
+
+  /**
+   * `codex exec` is one-shot with the prompt as argv. Its `--sandbox` flag is a real
+   * OS-level sandbox, making it the only transport that can guarantee a read-only run.
+   */
+  readonly capabilities: AgentCapabilities = {
+    supportsFollowUp: false,
+    supportsStreaming: true,
+    supportsNativeReadOnly: true,
+    promptTransport: 'argv',
+  };
+
   private buffer = '';
 
-  constructor(
-    private defaultArgs: string[] = [
-      'exec',
-      '--json',
-      '--skip-git-repo-check',
-      '--dangerously-bypass-approvals-and-sandbox',
-    ]
-  ) {}
+  constructor(private defaultArgs: string[] = ['exec', '--json', '--skip-git-repo-check']) {}
 
   getCLIArgs(prompt: string, mode?: string): string[] {
     const args = [...this.defaultArgs];
@@ -49,6 +61,19 @@ export class CodexExecJsonAdapter implements AgentAdapter {
     return events;
   }
 
+  /** Emits a final unterminated JSONL line so a last-gasp error event is not lost. */
+  flush(): ParsedAgentEvent[] {
+    const tail = this.buffer.trim();
+    this.buffer = '';
+    if (!tail) return [];
+
+    try {
+      return this.processJsonMessage(JSON.parse(tail));
+    } catch {
+      return [{ type: 'status', content: tail, timestamp: Date.now() }];
+    }
+  }
+
   private processJsonMessage(data: Record<string, unknown>): ParsedAgentEvent[] {
     const timestamp = Date.now();
     const type = String(data.type || '');
@@ -65,6 +90,11 @@ export class CodexExecJsonAdapter implements AgentAdapter {
       }
 
       if (itemType === 'command_execution') {
+        // Carry codex's own item id through so formatResponse can pair a result with the call
+        // it belongs to. Concurrent commands interleave started/completed events, so
+        // "attach to the most recent tool_call" attributes output to the wrong command.
+        const itemId = item.id === undefined ? undefined : String(item.id);
+
         if (type === 'item.started') {
           return [
             {
@@ -72,6 +102,7 @@ export class CodexExecJsonAdapter implements AgentAdapter {
               content: `Tool Call: shell`,
               toolName: 'shell',
               input: item.command,
+              metadata: itemId ? { itemId } : undefined,
               timestamp,
             },
           ];
@@ -81,6 +112,7 @@ export class CodexExecJsonAdapter implements AgentAdapter {
             type: 'tool_result',
             content: String(item.aggregated_output || ''),
             output: { exitCode: item.exit_code, output: item.aggregated_output },
+            metadata: itemId ? { itemId } : undefined,
             timestamp,
           },
         ];
@@ -113,16 +145,25 @@ export class CodexExecJsonAdapter implements AgentAdapter {
     const toolCalls: Array<{ name: string; input: unknown; output?: unknown }> = [];
     const textBlocks: string[] = [];
     const errors: string[] = [];
+    /** itemId -> index in toolCalls, so a result lands on its own call rather than the newest. */
+    const callsByItemId = new Map<string, number>();
 
     for (const ev of events) {
       if (ev.type === 'text') {
         textBlocks.push(ev.content);
         rawText += ev.content + '\n';
       } else if (ev.type === 'tool_call') {
+        const itemId = ev.metadata?.itemId;
+        if (typeof itemId === 'string') callsByItemId.set(itemId, toolCalls.length);
         toolCalls.push({ name: ev.toolName || 'shell', input: ev.input });
       } else if (ev.type === 'tool_result') {
-        const last = toolCalls[toolCalls.length - 1];
-        if (last) last.output = ev.output;
+        const itemId = ev.metadata?.itemId;
+        const index =
+          typeof itemId === 'string' && callsByItemId.has(itemId)
+            ? callsByItemId.get(itemId)!
+            : toolCalls.length - 1;
+        const target = toolCalls[index];
+        if (target) target.output = ev.output;
       } else if (ev.type === 'error') {
         errors.push(ev.content);
       }
@@ -132,7 +173,7 @@ export class CodexExecJsonAdapter implements AgentAdapter {
     if (!summary && errors.length > 0) {
       summary = `Error: ${errors.join('\n')}`;
     } else if (!summary) {
-      summary = `Execution completed with exit code ${exitCode}. Executed ${toolCalls.length} tool calls.`;
+      summary = describeEmptyResult(events, exitCode, toolCalls.length);
     }
 
     return {

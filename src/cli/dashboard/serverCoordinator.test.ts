@@ -74,7 +74,7 @@ describe('coordinateDashboardServer', () => {
     expect(connection.configAuthority).toBe('local');
     await connection.close();
 
-    const verifier = new DashboardRemoteClient(existing.url);
+    const verifier = new DashboardRemoteClient(existing.url, existing.token);
     try {
       await verifier.connect();
       expect(await verifier.listSessions()).toEqual([]);
@@ -95,7 +95,7 @@ describe('coordinateDashboardServer', () => {
       /different agent-rack configuration/
     );
 
-    const verifier = new DashboardRemoteClient(existing.url);
+    const verifier = new DashboardRemoteClient(existing.url, existing.token);
     try {
       await verifier.connect();
       expect(await verifier.listSessions()).toEqual([]);

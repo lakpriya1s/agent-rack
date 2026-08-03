@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { execa } from 'execa';
-import { AgentConfig, AgentTransportType } from '../config/schema.js';
 import { FormattedResult } from '../adapters/base.js';
 
 export const ReviewFindingSchema = z.object({
@@ -80,15 +79,45 @@ function findValidReviewObject(text: string): ReviewOutput | null {
   return null;
 }
 
+/** Cap on the raw text echoed back on a parse failure, so one runaway reply can't dominate. */
+const MAX_RAW_FALLBACK_CHARS = 20_000;
+
+function truncateRaw(rawText: string): string {
+  if (rawText.length <= MAX_RAW_FALLBACK_CHARS) return rawText;
+  return `${rawText.slice(0, MAX_RAW_FALLBACK_CHARS)}\n\n[truncated ${rawText.length - MAX_RAW_FALLBACK_CHARS} more characters]`;
+}
+
 function parseErrorFallback(rawText: string): ReviewOutput {
+  const truncated = truncateRaw(rawText);
   return {
     verdict: 'needs-attention',
-    summary: rawText,
+    summary: truncated,
     findings: [],
     next_steps: [],
     parseError: true,
-    raw: rawText,
+    raw: truncated,
   };
+}
+
+/**
+ * Repairs internally inconsistent reviews rather than rejecting them.
+ *
+ * Agents produce two contradictions often enough to matter: a reversed line range, and an
+ * "approve" verdict sitting above findings they themselves called critical. Both are cheap to
+ * fix and expensive to discard — failing schema validation here would throw away every finding
+ * in the reply and fall back to raw text, which is strictly worse than correcting the verdict.
+ */
+export function normalizeReview(review: ReviewOutput): ReviewOutput {
+  const findings = review.findings.map((finding) =>
+    finding.line_end < finding.line_start ? { ...finding, line_end: finding.line_start } : finding
+  );
+
+  const hasBlocking = findings.some(
+    (finding) => finding.severity === 'critical' || finding.severity === 'high'
+  );
+  const verdict = review.verdict === 'approve' && hasBlocking ? 'needs-attention' : review.verdict;
+
+  return { ...review, findings, verdict };
 }
 
 export function extractAndValidateReview(rawText: string): ReviewOutput {
@@ -99,7 +128,7 @@ export function extractAndValidateReview(rawText: string): ReviewOutput {
   for (const candidate of candidates) {
     const review = findValidReviewObject(candidate);
     if (review) {
-      return review;
+      return normalizeReview(review);
     }
   }
 
@@ -117,45 +146,13 @@ export function reviewFromResult(result: FormattedResult): ReviewOutput {
   return extractAndValidateReview(result.rawText || result.summary);
 }
 
-export function getReadOnlyMode(transport: AgentTransportType): string | undefined {
-  switch (transport) {
-    case 'codex_exec_json':
-      return 'read-only';
-    case 'claude_stream_json':
-      return 'plan';
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Maps a transport to the "escape hatch" CLI flag that disables its sandbox/permission
- * enforcement. These live in the default agent configs (so normal `agent_run` tasks can
- * actually edit files), but they nullify the read-only flags `agent_review` requests.
- */
-const ESCAPE_HATCH_ARGS: Partial<Record<AgentTransportType, string>> = {
-  claude_stream_json: '--dangerously-skip-permissions',
-  codex_exec_json: '--dangerously-bypass-approvals-and-sandbox',
-};
-
-/**
- * Returns a shallow copy of `agentConfig` with the transport's escape-hatch flag removed
- * from `args`. Transports with no known escape hatch are returned unchanged.
- */
-export function stripEscapeHatchArgs(agentConfig: AgentConfig): AgentConfig {
-  const escapeHatch = ESCAPE_HATCH_ARGS[agentConfig.transport];
-  if (!escapeHatch || !agentConfig.args.includes(escapeHatch)) {
-    return agentConfig;
-  }
-
-  return {
-    ...agentConfig,
-    args: agentConfig.args.filter((arg) => arg !== escapeHatch),
-  };
-}
-
 export interface ReviewPromptOptions {
   scope: 'working-tree' | 'branch';
+  /**
+   * The commit SHA the diff is taken against, already resolved via `resolveBaseRefToSha`.
+   * A SHA rather than the caller's ref string: this value is interpolated into a command the
+   * sub-agent is told to run, so it must be one git produced, not one a client supplied.
+   */
   baseRef?: string;
   adversarial: boolean;
   focus?: string;
@@ -186,8 +183,8 @@ Use "needs-attention" if there is any material issue worth blocking on. Use "app
 export function buildReviewPrompt(options: ReviewPromptOptions): string {
   const scopeInstruction =
     options.scope === 'branch'
-      ? `Review the changes on the current branch compared to the base ref \`${options.baseRef}\`. Run \`git diff ${options.baseRef}...HEAD\` yourself to see the full diff.`
-      : `Review the current uncommitted working-tree changes. Run \`git status\` and \`git diff\` (including \`--cached\`) yourself to see what changed.`;
+      ? `Review the changes on the current branch compared to base commit \`${options.baseRef}\`. Run \`git diff ${options.baseRef}...HEAD\` yourself to see the full diff.`
+      : `Review the current uncommitted working-tree changes. Run \`git status --short --untracked-files=all\` and \`git diff\` (including \`--cached\`) yourself to see what changed. Untracked files are part of the change: read their contents too, since they will not appear in \`git diff\`.`;
 
   const stanceBlock = options.adversarial
     ? `You are performing an ADVERSARIAL review. Your job is to break confidence in the change, not validate it.
@@ -200,10 +197,10 @@ Actively try to disprove the change rather than summarize it.${options.focus ? `
   // transport and CLI version, so prompt-level enforcement must never be dropped.
   const readOnlyInstruction = [
     'This review MUST be read-only: do not modify, create, or delete any files. Only inspect the repository and report findings.',
-    options.readOnlyEnforced ? 'This review is read-only by configuration.' : null,
-  ]
-    .filter(Boolean)
-    .join('\n');
+    options.readOnlyEnforced
+      ? 'This review is read-only by configuration.'
+      : 'Your runtime cannot enforce this, so complying is entirely your responsibility.',
+  ].join('\n');
 
   return `${stanceBlock}
 
@@ -212,6 +209,58 @@ ${scopeInstruction}
 ${readOnlyInstruction}
 
 ${REVIEW_JSON_CONTRACT}`;
+}
+
+/**
+ * Conservative subset of git's legal ref characters. agent-rack's own git calls pass argument
+ * arrays and are safe, but `baseRef` is also interpolated into the prompt as a command for the
+ * sub-agent to run — and that agent will very likely execute it through a shell. Anything that
+ * could terminate a command or start another one must never get that far.
+ */
+const SAFE_GIT_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+export class InvalidGitRefError extends Error {
+  constructor(ref: string) {
+    super(
+      `baseRef '${ref}' is not a valid git ref name. Use a plain branch, tag, or commit ` +
+        `(letters, digits, '.', '_', '/', '-'), e.g. 'main' or 'origin/main'.`
+    );
+    this.name = 'InvalidGitRefError';
+  }
+}
+
+export function assertSafeGitRef(ref: string): string {
+  // `..` would turn a single ref into a range, and a leading '-' would be read as a flag.
+  if (!SAFE_GIT_REF.test(ref) || ref.includes('..') || ref.endsWith('.lock')) {
+    throw new InvalidGitRefError(ref);
+  }
+  return ref;
+}
+
+/**
+ * Resolves a ref to an immutable commit SHA. The SHA — not the user-supplied string — is what
+ * goes into the review prompt, so the sub-agent runs a command built from a value git itself
+ * validated, and the review cannot shift under a concurrently-moving branch.
+ */
+export async function resolveBaseRefToSha(workspace: string, baseRef: string): Promise<string> {
+  assertSafeGitRef(baseRef);
+
+  try {
+    const { stdout } = await execa('git', ['rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`], {
+      cwd: workspace,
+    });
+    const sha = stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(sha)) {
+      throw new Error(`git rev-parse returned an unexpected value for '${baseRef}': '${sha}'`);
+    }
+    return sha;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('git rev-parse returned')) throw error;
+    throw new Error(
+      `baseRef '${baseRef}' does not resolve to a commit in ${workspace}. ` +
+        `Fetch it first, or pass a ref that exists locally.`
+    );
+  }
 }
 
 export interface GitPreCheckOptions {
@@ -227,6 +276,7 @@ export async function hasChangesToReview(options: GitPreCheckOptions): Promise<b
     if (!baseRef) {
       throw new Error("baseRef is required when scope is 'branch'.");
     }
+    assertSafeGitRef(baseRef);
     const { stdout } = await execa('git', ['diff', '--shortstat', `${baseRef}...HEAD`], { cwd: workspace });
     return stdout.trim().length > 0;
   }

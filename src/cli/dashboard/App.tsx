@@ -185,10 +185,10 @@ export const DashboardApp: React.FC<AppProps> = ({
 
       inFlight = true;
       try {
-        const snapshot = await withDashboardRequestTimeout(
+        const page = await withDashboardRequestTimeout(
           remoteClient.getSessionLogs(selectedSessionId)
         );
-        if (!cancelled) setEvents(snapshot);
+        if (!cancelled) setEvents(page.events);
       } catch {
         // Connection issues are already surfaced by the session-list poll above.
       } finally {
@@ -324,7 +324,17 @@ export const DashboardApp: React.FC<AppProps> = ({
     model?: string
   ) => {
     try {
-      const session = await remoteClient.createSession(agentId, prompt, workspace, kind, model);
+      // A review goes through agent_review, not a 'review'-labelled task session: that is
+      // where read-only enforcement, escape-hatch stripping, and the git precheck live. The
+      // launcher's prompt field becomes the review's optional focus text.
+      const session =
+        kind === 'review'
+          ? await remoteClient.createReview(agentId, workspace, {
+              adversarial: prompt.trim().length > 0,
+              focus: prompt.trim() || undefined,
+              model,
+            })
+          : await remoteClient.createSession(agentId, prompt, workspace, model);
       setSessionListState((state) => prependLaunchedSession(state, session));
       setActiveTab('sessions');
       setStatusMessage(`Launched ${agentId} (${kind}) session ${session.sessionId.slice(0, 8)}`);

@@ -1,9 +1,10 @@
 import { AgentMCPConfig } from '../config/schema.js';
 import { SessionManager } from '../engine/session.js';
-import { SessionKind } from '../engine/session.js';
 import { listAgentAvailability } from '../engine/availability.js';
 import { fingerprintAgentMCPConfig } from '../config/fingerprint.js';
-import { applyModelOverride, requireAgentConfig, resolveModel, resolveTimeoutSeconds, resolveWorkspace } from './args.js';
+import { capabilitiesForAgent } from '../adapters/index.js';
+import { describeUnenforcedPolicy } from '../security/policy.js';
+import { resolveExecution, resolveTimeoutSeconds, resolveWorkspace } from './args.js';
 
 export interface MCPToolDefinition {
   name: string;
@@ -27,7 +28,20 @@ export function registerUnifiedTools(
       properties: {},
     },
     handler: async () => {
-      const results = await listAgentAvailability(config);
+      const availability = await listAgentAvailability(config);
+      const policy = config.security.executionPolicy;
+
+      // Capabilities ship with the listing so a client learns up front that (for example)
+      // agent_session_send will not work for this agent, rather than after starting a session.
+      const results = availability.map((entry) => {
+        const agentConfig = config.agents[entry.agentId];
+        return {
+          ...entry,
+          capabilities: capabilitiesForAgent(agentConfig),
+          executionPolicy: policy,
+          policyWarning: describeUnenforcedPolicy(agentConfig.transport, policy),
+        };
+      });
 
       return {
         content: [
@@ -65,7 +79,11 @@ export function registerUnifiedTools(
         },
         mode: {
           type: 'string',
-          description: 'Execution mode (e.g. auto, plan, accept_edits, manual)',
+          description:
+            'Execution mode forwarded to the agent CLI (e.g. plan, acceptEdits, auto for claude; ' +
+            'read-only, workspace-write for codex). May only narrow authority: a mode granting ' +
+            "more than the server's configured security.executionPolicy is rejected. Omit to use " +
+            'the policy default.',
         },
         model: {
           type: 'string',
@@ -80,10 +98,8 @@ export function registerUnifiedTools(
       const prompt = String(args.prompt);
       const workspace = resolveWorkspace(args, config);
       const timeoutSeconds = resolveTimeoutSeconds(args, config);
-      const mode = args.mode ? String(args.mode) : undefined;
 
-      const baseAgentConfig = requireAgentConfig(config, agentId);
-      const agentConfig = applyModelOverride(baseAgentConfig, resolveModel(args, baseAgentConfig));
+      const { agentConfig, mode } = resolveExecution(config, agentId, args);
 
       const session = sessionManager.createSession(agentId, prompt, workspace, mode, {
         timeoutSeconds,
@@ -125,15 +141,14 @@ export function registerUnifiedTools(
           type: 'string',
           description: 'Execution mode',
         },
+        timeoutSeconds: {
+          type: 'number',
+          description: 'Maximum execution time in seconds (default: 600)',
+        },
         model: {
           type: 'string',
           description:
             "Model to run the agent with (e.g. 'gpt-5.5' for codex, 'opus' for claude). Overrides the agent's configured default model for this session only.",
-        },
-        kind: {
-          type: 'string',
-          enum: ['task', 'review'],
-          description: "Session kind for dashboard categorization (default 'task')",
         },
       },
       required: ['agent', 'prompt'],
@@ -142,13 +157,20 @@ export function registerUnifiedTools(
       const agentId = String(args.agent);
       const prompt = String(args.prompt);
       const workspace = args.workspace ? String(args.workspace) : undefined;
-      const mode = args.mode ? String(args.mode) : undefined;
-      const kind: SessionKind = args.kind === 'review' ? 'review' : 'task';
+      const timeoutSeconds = resolveTimeoutSeconds(args, config);
 
-      const baseAgentConfig = requireAgentConfig(config, agentId);
-      const agentConfigOverride = applyModelOverride(baseAgentConfig, resolveModel(args, baseAgentConfig));
+      const { agentConfig, mode } = resolveExecution(config, agentId, args);
 
-      const session = sessionManager.createSession(agentId, prompt, workspace, mode, { kind, agentConfigOverride });
+      // Deliberately no `kind` parameter: it used to accept 'review', which only relabelled
+      // the session for the dashboard while skipping every protection a real review gets
+      // (read-only mode, stripped escape hatches, the review prompt, the git precheck). A
+      // free-form task could therefore be presented as a read-only review. Only agent_review
+      // creates review sessions now.
+      const session = sessionManager.createSession(agentId, prompt, workspace, mode, {
+        kind: 'task',
+        timeoutSeconds,
+        agentConfigOverride: agentConfig,
+      });
 
       return {
         content: [
@@ -218,7 +240,12 @@ export function registerUnifiedTools(
   // Tool 5: agent_session_send
   tools.push({
     name: 'agent_session_send',
-    description: 'Sends follow-up text or user response to a running background sub-agent session',
+    description:
+      'Sends follow-up text to a running background sub-agent session. Only works for agents ' +
+      'whose transport keeps an input channel open (interactive/PTY agents such as opencode). ' +
+      'One-shot CLIs (claude, codex, agy) take their prompt as an argument and exit when the ' +
+      'turn ends, so they cannot receive follow-up input — check supportsFollowUp in ' +
+      'agent_list_available or the session info before calling this.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -282,7 +309,10 @@ export function registerUnifiedTools(
   // Tool 7: agent_session_logs
   tools.push({
     name: 'agent_session_logs',
-    description: 'Retrieves stdout/stderr log events from a session',
+    description:
+      'Retrieves log events from a session. Pass the nextCursor from the previous call to get ' +
+      'only new events; the response reports droppedCount when the retained tail has scrolled ' +
+      'past events you never saw.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -290,9 +320,15 @@ export function registerUnifiedTools(
           type: 'string',
           description: 'ID of the session',
         },
-        offset: {
+        cursor: {
           type: 'number',
-          description: 'Event offset index (default: 0)',
+          description:
+            'Return events at or after this cursor (default 0 = from the oldest retained event). ' +
+            'Use nextCursor from a previous response to poll incrementally.',
+        },
+        tail: {
+          type: 'number',
+          description: 'Instead of a cursor, return only the most recent N events.',
         },
         limit: {
           type: 'number',
@@ -303,7 +339,6 @@ export function registerUnifiedTools(
     },
     handler: async (args) => {
       const sessionId = String(args.sessionId);
-      const offset = typeof args.offset === 'number' ? args.offset : 0;
       const limit = typeof args.limit === 'number' ? args.limit : undefined;
 
       const session = sessionManager.getSession(sessionId);
@@ -311,13 +346,47 @@ export function registerUnifiedTools(
         throw new Error(`Session '${sessionId}' not found.`);
       }
 
-      const events = session.controller.getBuffer().getEvents(offset, limit);
+      const buffer = session.controller.getBuffer();
+      const page =
+        typeof args.tail === 'number'
+          ? buffer.getTail(args.tail)
+          : buffer.getSince(typeof args.cursor === 'number' ? args.cursor : 0, limit);
 
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(events, null, 2),
+            text: JSON.stringify(page, null, 2),
+          },
+        ],
+      };
+    },
+  });
+
+  tools.push({
+    name: 'agent_session_delete',
+    description:
+      'Forgets a finished session and frees its retained event log. Sessions are also pruned ' +
+      'automatically per security.sessionRetentionMinutes and maxRetainedSessions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sessionId: {
+          type: 'string',
+          description: 'ID of the finished session to delete',
+        },
+      },
+      required: ['sessionId'],
+    },
+    handler: async (args) => {
+      const sessionId = String(args.sessionId);
+      sessionManager.deleteSession(sessionId);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Session '${sessionId}' has been deleted.`,
           },
         ],
       };

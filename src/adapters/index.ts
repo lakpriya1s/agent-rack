@@ -11,6 +11,11 @@ export * from './agy.js';
 export * from './pty.js';
 export * from './codex.js';
 
+/** Capabilities for a transport without instantiating an adapter (tool descriptions, listings). */
+export function capabilitiesForAgent(agentConfig: AgentConfig) {
+  return createAdapter(agentConfig).capabilities;
+}
+
 export function createAdapter(agentConfig: AgentConfig): AgentAdapter {
   switch (agentConfig.transport) {
     case 'claude_stream_json':

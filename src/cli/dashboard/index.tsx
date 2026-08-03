@@ -30,7 +30,8 @@ export interface DashboardStartupDependencies {
   coordinate: typeof coordinateDashboardServer;
   setupClaude(
     url: string,
-    configAuthority: DashboardConnection['configAuthority']
+    configAuthority: DashboardConnection['configAuthority'],
+    token?: string
   ): Promise<ClaudeSetupResult>;
   renderDashboard(props: DashboardRenderProps): Promise<void>;
   reportError(message: string): void;
@@ -45,10 +46,12 @@ const defaultDependencies: DashboardStartupDependencies = {
   stdin: process.stdin,
   loadConfig: loadAgentRackConfig,
   coordinate: coordinateDashboardServer,
-  setupClaude: (url, configAuthority) =>
-    ensureClaudeDashboardRegistration(url, {
-      externalConnection: configAuthority === 'external',
-    }),
+  setupClaude: (url, configAuthority, token) =>
+    ensureClaudeDashboardRegistration(
+      url,
+      { externalConnection: configAuthority === 'external' },
+      token
+    ),
   renderDashboard: async (props) => {
     const { waitUntilExit } = render(<DashboardApp {...props} />, { exitOnCtrlC: false });
     await waitUntilExit();
@@ -87,7 +90,7 @@ export async function startDashboard(
   try {
     let setup: ClaudeSetupResult;
     try {
-      setup = await deps.setupClaude(connection.url, connection.configAuthority);
+      setup = await deps.setupClaude(connection.url, connection.configAuthority, connection.token);
     } catch (error) {
       if (isDashboardSetupAbort(error)) return;
       setup = {

@@ -20,17 +20,19 @@ export interface DashboardConnection {
   configAuthority: 'local' | 'external';
   launchMetadata: DashboardLaunchMetadata;
   client: DashboardRemoteClient;
+  /** Token this connection authenticated with, so Claude Code can be registered with it too. */
+  token?: string;
   close(): Promise<void>;
 }
 
 export interface DashboardCoordinatorDependencies {
-  createClient(url: string): DashboardRemoteClient;
+  createClient(url: string, token?: string): DashboardRemoteClient;
   startServer(config: AgentMCPConfig, port: number): Promise<AgentMCPHTTPServer>;
   probeTimeoutMs: number;
 }
 
 const defaults: DashboardCoordinatorDependencies = {
-  createClient: (url) => new DashboardRemoteClient(url),
+  createClient: (url, token) => new DashboardRemoteClient(url, token),
   startServer: (config, port) =>
     startSSEServer(createServerContextFromConfig(config), port),
   probeTimeoutMs: 2000,
@@ -41,13 +43,14 @@ class IncompatibleDashboardServerError extends Error {}
 async function connectClient(
   url: string,
   createClient: DashboardCoordinatorDependencies['createClient'],
-  timeoutMs: number
+  timeoutMs: number,
+  token?: string
 ): Promise<{
   client: DashboardRemoteClient;
   configFingerprint: string;
   launchMetadata: DashboardLaunchMetadata;
 }> {
-  const client = createClient(url);
+  const client = createClient(url, token);
   let timeout: NodeJS.Timeout | undefined;
   let mcpConnected = false;
   try {
@@ -97,7 +100,8 @@ export async function coordinateDashboardServer(
       const connected = await connectClient(
         resolution.url,
         deps.createClient,
-        deps.probeTimeoutMs
+        deps.probeTimeoutMs,
+        resolution.token
       );
       const { client } = connected;
       return {
@@ -106,6 +110,7 @@ export async function coordinateDashboardServer(
         configAuthority: 'external',
         launchMetadata: connected.launchMetadata,
         client,
+        token: resolution.token,
         close: () => client.close(),
       };
     } catch (error) {
@@ -118,7 +123,8 @@ export async function coordinateDashboardServer(
     const connected = await connectClient(
       resolution.url,
       deps.createClient,
-      deps.probeTimeoutMs
+      deps.probeTimeoutMs,
+      resolution.token
     );
     if (connected.configFingerprint !== localFingerprint) {
       await connected.client.close().catch(() => undefined);
@@ -132,6 +138,7 @@ export async function coordinateDashboardServer(
       configAuthority: 'local',
       launchMetadata: connected.launchMetadata,
       client: connected.client,
+      token: resolution.token,
       close: () => connected.client.close(),
     };
   } catch (error) {
@@ -154,10 +161,13 @@ export async function coordinateDashboardServer(
   let client: DashboardRemoteClient | undefined;
   let launchMetadata: DashboardLaunchMetadata | undefined;
   try {
+    // A server this dashboard just started hands its token back directly, so there is no
+    // dependence on the token file having landed yet.
     const connected = await connectClient(
       ownedServer.url,
       deps.createClient,
-      deps.probeTimeoutMs
+      deps.probeTimeoutMs,
+      ownedServer.token
     );
     if (connected.configFingerprint !== localFingerprint) {
       throw new Error('Auto-started server returned an unexpected configuration identity.');
@@ -176,6 +186,7 @@ export async function coordinateDashboardServer(
     configAuthority: 'local',
     launchMetadata: launchMetadata!,
     client: client!,
+    token: ownedServer.token,
     close: () => {
       closePromise ??= (async () => {
         await client.close().catch(() => undefined);

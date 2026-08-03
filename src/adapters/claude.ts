@@ -1,4 +1,11 @@
-import { AgentAdapter, ParsedAgentEvent, FormattedResult, appendToolCallsBlock } from './base.js';
+import {
+  AgentAdapter,
+  AgentCapabilities,
+  ParsedAgentEvent,
+  FormattedResult,
+  appendToolCallsBlock,
+  describeEmptyResult,
+} from './base.js';
 
 /**
  * Valid values for Claude Code's `--permission-mode` flag (verified against CLI 2.1.220:
@@ -21,9 +28,22 @@ const CLAUDE_PERMISSION_MODES = new Set([
 
 export class ClaudeStreamJsonAdapter implements AgentAdapter {
   readonly transportType = 'claude_stream_json';
+
+  /**
+   * The prompt is a positional argv argument and the process exits when the turn ends, so
+   * there is no second turn to send follow-up input to. `--permission-mode plan` does give a
+   * genuine read-only run.
+   */
+  readonly capabilities: AgentCapabilities = {
+    supportsFollowUp: false,
+    supportsStreaming: true,
+    supportsNativeReadOnly: true,
+    promptTransport: 'argv',
+  };
+
   private buffer = '';
 
-  constructor(private defaultArgs: string[] = ['--dangerously-skip-permissions', '--output-format', 'json']) {}
+  constructor(private defaultArgs: string[] = ['--output-format', 'json']) {}
 
   getCLIArgs(prompt: string, mode?: string): string[] {
     const args = [...this.defaultArgs];
@@ -61,6 +81,22 @@ export class ClaudeStreamJsonAdapter implements AgentAdapter {
     }
 
     return events;
+  }
+
+  /**
+   * `claude --output-format json` emits one JSON object and may exit without a trailing
+   * newline, in which case the whole response sits in `buffer` and would be dropped.
+   */
+  flush(): ParsedAgentEvent[] {
+    const tail = this.buffer.trim();
+    this.buffer = '';
+    if (!tail) return [];
+
+    try {
+      return this.processJsonMessage(JSON.parse(tail));
+    } catch {
+      return [{ type: 'text', content: tail, timestamp: Date.now() }];
+    }
   }
 
   private processJsonMessage(data: Record<string, unknown>): ParsedAgentEvent[] {
@@ -143,7 +179,7 @@ export class ClaudeStreamJsonAdapter implements AgentAdapter {
 
     let summary = textBlocks.join('\n\n').trim();
     if (!summary) {
-      summary = `Execution completed with exit code ${exitCode}. Executed ${toolCalls.length} tool calls.`;
+      summary = describeEmptyResult(events, exitCode, toolCalls.length);
     }
 
     return {

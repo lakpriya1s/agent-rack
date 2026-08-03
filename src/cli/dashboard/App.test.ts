@@ -19,7 +19,10 @@ function session(sessionId: string): AgentSessionInfo {
     createdAt: new Date().toISOString(),
     workspace: '/tmp',
     eventCount: 0,
+    droppedEventCount: 0,
+    nextCursor: 0,
     kind: 'task',
+    supportsFollowUp: false,
   };
 }
 

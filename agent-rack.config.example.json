@@ -21,7 +21,6 @@
       "name": "Claude Code CLI",
       "command": "claude",
       "args": [
-        "--dangerously-skip-permissions",
         "--output-format",
         "json"
       ],
@@ -45,17 +44,24 @@
       "args": [
         "exec",
         "--json",
-        "--skip-git-repo-check",
-        "--dangerously-bypass-approvals-and-sandbox"
+        "--skip-git-repo-check"
       ],
       "transport": "codex_exec_json",
       "env": {},
-      "description": "OpenAI Codex CLI non-interactive JSON streaming agent"
+      "description": "OpenAI Codex CLI non-interactive JSON streaming agent",
+      "inheritEnv": [
+        "OPENAI_API_KEY"
+      ]
     }
   },
   "security": {
+    "executionPolicy": "workspace-write",
     "sanitizeEnv": true,
     "maxConcurrentSessions": 5,
-    "defaultTimeoutSeconds": 600
+    "defaultTimeoutSeconds": 600,
+    "sessionRetentionMinutes": 60,
+    "maxRetainedSessions": 200,
+    "maxSessionOutputBytes": 5000000,
+    "requireSseAuth": true
   }
 }

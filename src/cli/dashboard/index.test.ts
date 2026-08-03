@@ -91,9 +91,12 @@ describe('startDashboard orchestration', () => {
 
     await startDashboard(undefined, 'http://127.0.0.1:9999/sse', deps);
 
+    // The third argument is the SSE bearer token, forwarded so Claude Code's registration is
+    // created with a matching Authorization header rather than silently 401ing.
     expect(setupClaude).toHaveBeenCalledWith(
       'http://127.0.0.1:8987/sse',
-      'external'
+      'external',
+      undefined
     );
   });
 

@@ -25,9 +25,15 @@ parameter — it's the same call with less to get wrong.
 Use when:
 - the task is likely long-running (large refactors, broad migrations, anything that could
   plausibly run past a couple of minutes),
-- the user wants to keep working while it runs,
-- the user might want to send follow-up input mid-task (`agent_session_send`), or
+- the user wants to keep working while it runs, or
 - the task should be cancelable (`agent_session_cancel`) if it goes off track.
+
+**Do not promise follow-up input.** `agent_session_send` only works for agents whose transport
+keeps an input channel open — the interactive/PTY ones (`opencode`). `claude`, `codex`, and `agy`
+take their prompt as a command-line argument and exit when the turn ends, so they cannot receive
+a second message; calling it returns an error. Check `supportsFollowUp` on the session info or in
+`agent_list_available` before telling the user they can steer a session mid-flight. When it's
+`false`, the equivalent is starting a new session with the follow-up as its prompt.
 
 Once started, tell the user it's running and give them the `sessionId` — a background session
 has no persistent UI signal of its own (no status-line badge, no expandable details panel) the

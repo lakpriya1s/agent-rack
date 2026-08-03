@@ -6,7 +6,11 @@ import readline from 'readline';
 import { fileURLToPath } from 'url';
 import { execa } from 'execa';
 import { startAgentMCPServer } from '../server.js';
-import { loadConfig, getDefaultConfig, saveConfig } from '../config/loader.js';
+import { loadConfig, getDefaultConfig, saveConfig, writeJsonFileAtomic } from '../config/loader.js';
+import type { AgentMCPConfig } from '../config/schema.js';
+import { redactSensitiveEnv } from '../security/env.js';
+import { describeUnenforcedPolicy } from '../security/policy.js';
+import { capabilitiesForAgent } from '../adapters/index.js';
 import { listAgentAvailability, isBinaryAvailable } from '../engine/availability.js';
 import { handleCpCommand, copySkills } from './skills.js';
 import { getPackageVersion } from './version.js';
@@ -22,6 +26,61 @@ function resolveBinPath(): string {
 }
 
 /**
+ * True when the running script lives in an npm/pnpm cache rather than a stable install.
+ *
+ * `npx` extracts the package into a cache directory that npm is free to evict. Persisting that
+ * path into a client's config produces a registration that works today and silently breaks
+ * later, with an error the user cannot connect back to `npx`. Detected so those registrations
+ * can use a version-pinned `npx` invocation instead of a doomed absolute path.
+ */
+function isEphemeralBinPath(binPath: string): boolean {
+  const normalized = binPath.replace(/\\/g, '/');
+  return /\/_npx\/|\/\.npm\/_npx\/|\/npm-cache\/_npx\/|\/\.pnpm-store\/|\/Caches\/npm\//i.test(
+    normalized
+  );
+}
+
+/**
+ * How a client should be told to launch agent-rack.
+ *
+ * Uses `process.execPath` rather than a bare `"node"`: GUI apps (Claude Desktop, Cursor) are
+ * launched by the OS with a minimal PATH that frequently lacks the user's Node, especially
+ * under nvm/asdf/volta — a bare "node" then fails with ENOENT at startup.
+ */
+function resolveLaunchCommand(): { command: string; args: string[]; pinnedNpx: boolean } {
+  const binPath = resolveBinPath();
+  if (isEphemeralBinPath(binPath)) {
+    return {
+      command: 'npx',
+      args: ['--yes', `agent-rack@${getPackageVersion()}`, 'start'],
+      pinnedNpx: true,
+    };
+  }
+  return { command: process.execPath, args: [binPath, 'start'], pinnedNpx: false };
+}
+
+/**
+ * Outcome of one client registration. Returned rather than printed-and-swallowed so `install`
+ * and `setup` can exit non-zero: a failed registration that reports success sends the user off
+ * to restart a client that will never see agent-rack.
+ */
+export type InstallationResult =
+  | { success: true; target: string }
+  | { success: false; target: string; error: Error };
+
+function installOk(target: string): InstallationResult {
+  return { success: true, target };
+}
+
+function installFailed(target: string, error: unknown): InstallationResult {
+  return {
+    success: false,
+    target,
+    error: error instanceof Error ? error : new Error(String(error)),
+  };
+}
+
+/**
  * Root of the installed package (two levels up from this compiled file at `dist/cli/index.js`).
  * Used to locate the shipped plugin skill files at `plugins/agent-rack/skills/` regardless of
  * whether this is running from a local checkout, a global npm install, or via `npx`.
@@ -31,14 +90,28 @@ function packageRoot(): string {
   return path.resolve(here, '..', '..');
 }
 
+/**
+ * Copy of the effective config safe to print: every agent's `env` has sensitive values replaced
+ * with a redaction marker. Keys are preserved so the shape stays diagnosable.
+ */
+function redactConfigForDisplay(config: AgentMCPConfig): AgentMCPConfig {
+  return {
+    ...config,
+    agents: Object.fromEntries(
+      Object.entries(config.agents).map(([agentId, agentConfig]) => [
+        agentId,
+        { ...agentConfig, env: redactSensitiveEnv(agentConfig.env) },
+      ])
+    ),
+  };
+}
+
 /** The `mcpServers` block every MCP client (Claude Desktop, Cursor, Antigravity) expects. */
 function buildMcpServerSnippet() {
+  const { command, args } = resolveLaunchCommand();
   return {
     mcpServers: {
-      'agent-rack': {
-        command: 'node',
-        args: [resolveBinPath(), 'start'],
-      },
+      'agent-rack': { command, args },
     },
   };
 }
@@ -50,10 +123,9 @@ function readJsonConfig(configPath: string): any {
   return {};
 }
 
+/** Atomic write with a `.bak`, so a failed write cannot leave a client's config truncated. */
 function writeJsonConfig(configPath: string, config: any): void {
-  const dir = path.dirname(configPath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+  writeJsonFileAtomic(configPath, config);
 }
 
 /** macOS's Claude Desktop config path — the only platform this target supports today. */
@@ -120,68 +192,87 @@ function opencodeConfigPath(): string {
  * tied to this exact directory, stored in the user's private config, not shared) rather than us
  * silently picking a different default than before this option existed.
  */
-async function registerClaude(binPath: string, scope?: string): Promise<void> {
+async function registerClaude(scope?: string): Promise<InstallationResult> {
   const scopeArgs = scope ? ['-s', scope] : [];
+  const { command, args } = resolveLaunchCommand();
   try {
     console.log(`Registering agent-rack with Claude Code CLI${scope ? ` (scope: ${scope})` : ''}...`);
-    await execa('claude', ['mcp', 'add', ...scopeArgs, 'agent-rack', '--', 'node', binPath, 'start'], {
+    await execa('claude', ['mcp', 'add', ...scopeArgs, 'agent-rack', '--', command, ...args], {
       stdio: 'inherit',
     });
     console.log('\n✓ Successfully added agent-rack to Claude Code CLI!');
+    return installOk('claude');
   } catch (err) {
     console.error('✗ Failed to register with Claude Code CLI:', err instanceof Error ? err.message : String(err));
+    return installFailed('claude', err);
   }
 }
 
-async function registerCodex(binPath: string): Promise<void> {
+async function registerCodex(): Promise<InstallationResult> {
+  const { command, args } = resolveLaunchCommand();
   try {
     console.log('Registering agent-rack with Codex CLI...');
-    await execa('codex', ['mcp', 'add', 'agent-rack', '--', 'node', binPath, 'start'], { stdio: 'inherit' });
+    await execa('codex', ['mcp', 'add', 'agent-rack', '--', command, ...args], { stdio: 'inherit' });
     console.log('\n✓ Successfully added agent-rack to Codex CLI!');
+    return installOk('codex');
   } catch (err) {
     console.error('✗ Failed to register with Codex CLI:', err instanceof Error ? err.message : String(err));
+    return installFailed('codex', err);
   }
 }
 
 /** Shared by desktop/cursor/antigravity — all three use the identical `mcpServers` shape. */
-function registerIntoMcpServersConfig(configPath: string, label: string): void {
+function registerIntoMcpServersConfig(
+  configPath: string,
+  label: string,
+  target: string
+): InstallationResult {
   try {
     const config = readJsonConfig(configPath);
     config.mcpServers = config.mcpServers || {};
     config.mcpServers['agent-rack'] = buildMcpServerSnippet().mcpServers['agent-rack'];
     writeJsonConfig(configPath, config);
     console.log(`\n✓ Successfully added agent-rack to ${label} config at:\n  ${configPath}`);
+    return installOk(target);
   } catch (err) {
     console.error(`✗ Failed to update ${label} config:`, err instanceof Error ? err.message : String(err));
+    return installFailed(target, err);
   }
 }
 
-function registerDesktop(): void {
-  registerIntoMcpServersConfig(desktopConfigPath(), 'Claude Desktop');
+function registerDesktop(): InstallationResult {
+  return registerIntoMcpServersConfig(desktopConfigPath(), 'Claude Desktop', 'desktop');
 }
 
-function registerCursor(scope: 'user' | 'project' = 'user'): void {
+function registerCursor(scope: 'user' | 'project' = 'user'): InstallationResult {
   const label = scope === 'project' ? 'Cursor (this project)' : 'Cursor';
-  registerIntoMcpServersConfig(cursorConfigPath(scope), label);
+  const result = registerIntoMcpServersConfig(cursorConfigPath(scope), label, 'cursor');
+  // Skills are a convenience, not part of the registration contract, so a copy failure does
+  // not fail the install.
   copySkillsTo(cursorSkillsDir(scope), label);
+  return result;
 }
 
-function registerAntigravity(): void {
-  registerIntoMcpServersConfig(antigravityConfigPath(), 'Antigravity');
+function registerAntigravity(): InstallationResult {
+  const result = registerIntoMcpServersConfig(antigravityConfigPath(), 'Antigravity', 'antigravity');
   copySkillsTo(antigravitySkillsDir(), 'Antigravity');
+  return result;
 }
 
-function registerOpenCode(binPath: string): void {
+function registerOpenCode(): InstallationResult {
   const configPath = opencodeConfigPath();
+  const { command, args } = resolveLaunchCommand();
   try {
     const config = readJsonConfig(configPath);
     if (!config.$schema) config.$schema = 'https://opencode.ai/config.json';
     config.mcp = config.mcp || {};
-    config.mcp['agent-rack'] = { type: 'local', command: ['node', binPath, 'start'] };
+    config.mcp['agent-rack'] = { type: 'local', command: [command, ...args] };
     writeJsonConfig(configPath, config);
     console.log(`\n✓ Successfully added agent-rack to OpenCode config at:\n  ${configPath}`);
+    return installOk('opencode');
   } catch (err) {
     console.error('✗ Failed to update OpenCode config:', err instanceof Error ? err.message : String(err));
+    return installFailed('opencode', err);
   }
 }
 
@@ -311,24 +402,38 @@ export function runCLI() {
       "project or user (global). Only applies to --target claude|cursor. claude defaults to Claude Code's own default (local) when omitted; cursor defaults to user."
     )
     .action(async (options) => {
-      const binPath = resolveBinPath();
+      const { pinnedNpx } = resolveLaunchCommand();
+      if (pinnedNpx) {
+        console.log(
+          `Note: agent-rack is running from an npx cache, which npm may delete later. ` +
+            `Registering \`npx --yes agent-rack@${getPackageVersion()} start\` instead of that ` +
+            `temporary path. For a faster, offline-capable launch, install it properly ` +
+            `(\`npm i -g agent-rack\`) and re-run this command.\n`
+        );
+      }
 
+      let result: InstallationResult | undefined;
       if (options.target === 'claude') {
-        await registerClaude(binPath, options.scope);
+        result = await registerClaude(options.scope);
       } else if (options.target === 'codex') {
-        await registerCodex(binPath);
+        result = await registerCodex();
       } else if (options.target === 'desktop') {
-        registerDesktop();
+        result = registerDesktop();
       } else if (options.target === 'cursor') {
-        registerCursor(options.scope === 'project' ? 'project' : 'user');
+        result = registerCursor(options.scope === 'project' ? 'project' : 'user');
       } else if (options.target === 'antigravity' || options.target === 'agy') {
-        registerAntigravity();
+        result = registerAntigravity();
       } else if (options.target === 'opencode') {
-        registerOpenCode(binPath);
+        result = registerOpenCode();
       } else {
         console.log(`No automatic registration is available for target '${options.target}' yet.`);
         console.log(`Run \`agent-rack snippet ${options.target}\` to print the mcpServers JSON, then add it to that client's config by hand.`);
+        return;
       }
+
+      // A registration that failed must not look like success: scripts and CI depend on the
+      // exit code, and a user told "restart your client" would otherwise find nothing there.
+      if (!result.success) process.exitCode = 1;
     });
 
   program
@@ -380,6 +485,7 @@ export function runCLI() {
 
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       let registeredAny = false;
+      const failures: string[] = [];
 
       /**
        * `scopePrompt` is only present for targets with a verified project-vs-user distinction
@@ -392,20 +498,20 @@ export function runCLI() {
         label: string;
         skipLabel: string;
         scopePrompt?: { defaultProject: boolean };
-        run: (scope: 'user' | 'project') => void | Promise<void>;
+        run: (scope: 'user' | 'project') => InstallationResult | Promise<InstallationResult>;
       }> = [
         {
           detected: hasClaude,
           label: 'Claude Code CLI',
           skipLabel: 'Claude Code CLI not found on $PATH',
           scopePrompt: { defaultProject: projectClaude },
-          run: (scope) => registerClaude(binPath, scope === 'project' ? 'project' : undefined),
+          run: (scope) => registerClaude(scope === 'project' ? 'project' : undefined),
         },
         {
           detected: hasCodex,
           label: 'Codex CLI',
           skipLabel: 'Codex CLI not found on $PATH',
-          run: () => registerCodex(binPath),
+          run: () => registerCodex(),
         },
         {
           detected: hasDesktop,
@@ -430,7 +536,7 @@ export function runCLI() {
           detected: hasOpenCode,
           label: 'OpenCode',
           skipLabel: 'OpenCode not found on $PATH',
-          run: () => registerOpenCode(binPath),
+          run: () => registerOpenCode(),
         },
       ];
 
@@ -447,11 +553,19 @@ export function runCLI() {
             ? 'project'
             : 'user';
         }
-        await step.run(scope);
-        registeredAny = true;
+        // registeredAny used to be set unconditionally, so a wizard where every registration
+        // failed still printed "Done. Restart the client(s)" and exited 0.
+        const result = await step.run(scope);
+        if (result.success) registeredAny = true;
+        else failures.push(step.label);
       }
 
       rl.close();
+
+      if (failures.length > 0) {
+        console.error(`\n✗ Registration failed for: ${failures.join(', ')}`);
+        process.exitCode = 1;
+      }
 
       console.log(
         registeredAny
@@ -522,7 +636,14 @@ export function runCLI() {
       try {
         const { config, filePath } = loadConfig(options.config);
         console.log(`✓ Configuration valid! Loaded from: ${filePath || 'default runtime'}`);
-        console.log(JSON.stringify(config, null, 2));
+        // Agent `env` blocks routinely hold API keys, and this output gets pasted into issues
+        // and chat logs, so values are redacted before printing.
+        console.log(JSON.stringify(redactConfigForDisplay(config), null, 2));
+        console.log(`\nExecution policy: ${config.security.executionPolicy}`);
+        for (const [agentId, agentConfig] of Object.entries(config.agents)) {
+          const warning = describeUnenforcedPolicy(agentConfig.transport, config.security.executionPolicy);
+          if (warning) console.log(`  ! ${agentId}: ${warning}`);
+        }
       } catch (err) {
         console.error('✗ Configuration invalid:', err);
         process.exit(1);
@@ -535,15 +656,24 @@ export function runCLI() {
     .option('-c, --config <path>', 'Path to agent-rack.config.json')
     .action(async (options) => {
       const { config } = loadConfig(options.config);
-      console.log('\nRegistered Agents Status:\n');
+      const policy = config.security.executionPolicy;
+      console.log(`\nRegistered Agents Status (executionPolicy: ${policy}):\n`);
 
       for (const agent of await listAgentAvailability(config)) {
+        const agentConfig = config.agents[agent.agentId];
         const isAvailable = agent.status === 'available';
         const icon = isAvailable ? '✓' : '✗';
         const statusText = isAvailable ? 'AVAILABLE' : 'MISSING BINARY';
         console.log(` ${icon} [${agent.agentId}] ${agent.name} (${agent.command}) -> ${statusText}`);
         console.log(`   Transport: ${agent.transport}`);
-        console.log(`   Args: ${config.agents[agent.agentId].args.join(' ')}`);
+        console.log(`   Args: ${agentConfig.args.join(' ')}`);
+
+        const capabilities = capabilitiesForAgent(agentConfig);
+        console.log(
+          `   Follow-up input: ${capabilities.supportsFollowUp ? 'yes' : 'no (one-shot; agent_session_send will refuse)'}`
+        );
+        const warning = describeUnenforcedPolicy(agent.transport, policy);
+        if (warning) console.log(`   ! ${warning}`);
         console.log('');
       }
     });

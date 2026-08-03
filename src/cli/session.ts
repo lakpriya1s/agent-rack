@@ -18,16 +18,20 @@ async function connectSessionClient(
   options: Pick<SessionCommandOptions, 'config' | 'connect'>
 ): Promise<{ client: DashboardRemoteClient; url: string }> {
   const { config } = loadConfig(options.config);
-  const { url } = resolveDashboardServerUrl(config, options.connect);
-  const client = new DashboardRemoteClient(url);
+  const { url, token } = resolveDashboardServerUrl(config, options.connect);
+  const client = new DashboardRemoteClient(url, token);
   try {
     await client.connect();
   } catch (error) {
     throw new Error(
       `Could not reach an agent-rack server at ${url}. This command polls an already-running ` +
         `SSE server — start one first with 'agent-rack start --transport sse' or ` +
-        `'agent-rack dashboard', or pass --connect <url>. ` +
-        `Connection error: ${error instanceof Error ? error.message : String(error)}`
+        `'agent-rack dashboard', or pass --connect <url>.` +
+        (token
+          ? ''
+          : ` No auth token was found for this server; if it is running elsewhere, set ` +
+            `AGENT_RACK_TOKEN or append ?token=<token> to --connect.`) +
+        ` Connection error: ${error instanceof Error ? error.message : String(error)}`
     );
   }
   return { client, url };
@@ -36,6 +40,8 @@ async function connectSessionClient(
 /** One diffable line per session, safe to compare across polls in a shell loop. */
 function formatSessionLine(info: AgentSessionInfo): string {
   const summary = (info.summary || '').replace(/\s+/g, ' ').trim();
+  // `events` is the monotonic total, not the retained buffer length — so this line keeps
+  // changing as the agent works even after the retained tail has hit its cap.
   return `sessionId=${info.sessionId} agent=${info.agentId} kind=${info.kind} status=${info.status} events=${info.eventCount} summary="${summary}"`;
 }
 
@@ -61,18 +67,22 @@ export async function runSessionTail(sessionId: string, options: SessionTailOpti
   try {
     const info = await client.getSessionStatus(sessionId);
     const count = options.count ?? 5;
-    const offset = Math.max(info.eventCount - count, 0);
-    const events = await client.getSessionLogs(sessionId, offset);
+    // Ask the server for the tail directly rather than deriving an offset from a count: the
+    // retained window may start well past zero once older events have been evicted.
+    const page = await client.getSessionLogTail(sessionId, count);
 
     if (options.json) {
-      console.log(JSON.stringify(events, null, 2));
+      console.log(JSON.stringify(page, null, 2));
       return;
     }
-    if (events.length === 0) {
+    if (page.events.length === 0) {
       console.log(`sessionId=${sessionId} status=${info.status} (no events yet)`);
       return;
     }
-    for (const event of events) console.log(formatEventLine(event));
+    if (page.droppedCount > 0) {
+      console.log(`[${page.droppedCount} earlier event(s) dropped from the retained log]`);
+    }
+    for (const event of page.events) console.log(formatEventLine(event));
   } finally {
     await client.close();
   }

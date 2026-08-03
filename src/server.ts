@@ -11,6 +11,7 @@ import { SessionManager } from './engine/session.js';
 import { registerUnifiedTools, MCPToolDefinition } from './tools/unified.js';
 import { registerShortcutTools } from './tools/shortcuts.js';
 import { registerReviewTools } from './tools/review.js';
+import { createServerAuth, publishToken, removeTokenFile, tokenFilePath } from './security/auth.js';
 import { getPackageVersion } from './cli/version.js';
 
 export interface AgentMCPServerContext {
@@ -24,11 +25,17 @@ export interface AgentMCPServerContext {
 export interface AgentMCPHTTPServer {
   server: http.Server;
   url: string;
+  /** Bearer token required on /sse and /message, or undefined when auth is disabled. */
+  token?: string;
   close(): Promise<void>;
 }
 
 /** A backwards-compatible HTTP server whose close callback also shuts down tracked sessions. */
-export type ManagedAgentMCPServer = http.Server & { shutdown(): Promise<void> };
+export type ManagedAgentMCPServer = http.Server & {
+  shutdown(): Promise<void>;
+  /** Bearer token required by this server's SSE endpoints, when auth is enabled. */
+  agentRackToken?: string;
+};
 
 /** Builds the shared context from a config that has already been loaded and validated. */
 export function createServerContextFromConfig(
@@ -122,13 +129,34 @@ export async function createAgentMCPServer(configPath?: string) {
 /** Starts a closeable loopback SSE server using an already-created shared context. */
 export async function startSSEServer(
   ctx: AgentMCPServerContext,
-  port: number
+  port: number,
+  authOptions: { required?: boolean; token?: string; publish?: boolean } = {}
 ): Promise<AgentMCPHTTPServer> {
   const app = express();
   app.use(express.json());
 
+  const authRequired = authOptions.required ?? ctx.config.security.requireSseAuth;
+  // Created with publish deferred: the token file is keyed by the *bound* port, which differs
+  // from `port` whenever 0 was requested to get an ephemeral one.
+  const auth = createServerAuth({
+    port,
+    required: authRequired,
+    token: authOptions.token ?? process.env.AGENT_RACK_TOKEN,
+    publish: false,
+  });
+
   const transports = new Map<string, SSEServerTransport>();
   const mcpServers = new Map<string, Server>();
+
+  /**
+   * Gate applied to both endpoints. It runs before any MCP handling, because every tool this
+   * server exposes can spawn a process or read another client's session output.
+   */
+  app.use((req, res, next) => {
+    const result = auth.authorizeHeaders(req.headers as Record<string, string | string[] | undefined>);
+    if (result.ok) return next();
+    res.status(result.status).json({ error: result.reason });
+  });
 
   app.get('/sse', async (_req, res) => {
     const transport = new SSEServerTransport('/message', res);
@@ -184,10 +212,14 @@ export async function startSSEServer(
   });
 
   const boundPort = (server.address() as { port: number }).port;
+  const shouldPublish = authRequired && authOptions.publish !== false;
+  if (shouldPublish) publishToken(boundPort, auth.token);
+
   let closePromise: Promise<void> | undefined;
   const close = (): Promise<void> => {
     if (closePromise) return closePromise;
     closePromise = (async () => {
+      if (shouldPublish) removeTokenFile(boundPort);
       await ctx.sessionManager.shutdown();
       await Promise.allSettled([...mcpServers.values()].map((mcpServer) => mcpServer.close()));
       transports.clear();
@@ -203,7 +235,12 @@ export async function startSSEServer(
     return closePromise;
   };
 
-  return { server, url: `http://127.0.0.1:${boundPort}/sse`, close };
+  return {
+    server,
+    url: `http://127.0.0.1:${boundPort}/sse`,
+    token: authRequired ? auth.token : undefined,
+    close,
+  };
 }
 
 function withLifecycleClose(handle: AgentMCPHTTPServer): ManagedAgentMCPServer {
@@ -216,7 +253,31 @@ function withLifecycleClose(handle: AgentMCPHTTPServer): ManagedAgentMCPServer {
     return server;
   }) as typeof server.close;
   server.shutdown = handle.close;
+  server.agentRackToken = handle.token;
   return server;
+}
+
+/**
+ * Best-effort cleanup of the published token on process termination.
+ *
+ * Uses `once` per signal and re-raises after cleanup so the default exit behaviour (and the
+ * shell's reported exit status) is preserved rather than swallowed.
+ */
+function installShutdownCleanup(handle: AgentMCPHTTPServer): void {
+  if (!handle.token) return;
+  const boundPort = (handle.server.address() as { port: number } | null)?.port;
+  if (boundPort === undefined) return;
+
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    process.once(signal, () => {
+      removeTokenFile(boundPort);
+      void handle.close().finally(() => {
+        process.removeAllListeners(signal);
+        process.kill(process.pid, signal);
+      });
+    });
+  }
+  process.once('exit', () => removeTokenFile(boundPort));
 }
 
 export async function startAgentMCPServer(
@@ -239,6 +300,24 @@ export async function startAgentMCPServer(
   if (targetTransport === 'sse') {
     const handle = await startSSEServer(ctx, targetPort);
     console.error(`Agent-MCP Server running on HTTP-SSE: ${handle.url}`);
+    if (handle.token) {
+      const boundPort = (handle.server.address() as { port: number }).port;
+      console.error(
+        `SSE authentication is enabled. agent-rack's own dashboard and 'session' commands read ` +
+          `the token from ${tokenFilePath(boundPort)} automatically. For any other client, send ` +
+          `'Authorization: Bearer <token>' from that file (or set AGENT_RACK_TOKEN before ` +
+          `starting to pin your own). Disable with security.requireSseAuth: false.`
+      );
+    } else {
+      console.error(
+        `Warning: SSE authentication is DISABLED (security.requireSseAuth: false). Any local ` +
+          `process can start agents, read session logs, and cancel work on this server.`
+      );
+    }
+    // A SIGTERM/SIGINT death would otherwise leave the published token sitting on disk after
+    // the server it belongs to is gone. Registered here (the CLI entry point) rather than in
+    // startSSEServer, so embedding the server in another process installs no global handlers.
+    installShutdownCleanup(handle);
     return withLifecycleClose(handle);
   } else {
     const server = buildServer(ctx);

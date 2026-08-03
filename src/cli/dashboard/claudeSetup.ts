@@ -254,9 +254,32 @@ async function restoreRegistration(
   }
 }
 
+/**
+ * Whether an existing registration already carries the token we would register. With no token
+ * required, any registration qualifies.
+ */
+function registrationCarriesToken(
+  registration: ClaudeRegistration,
+  token: string | undefined
+): boolean {
+  if (!token) return true;
+  return (registration.headers ?? []).some((header) => {
+    const [name, ...rest] = header.split(':');
+    return (
+      name.trim().toLowerCase() === 'authorization' &&
+      rest.join(':').trim() === `Bearer ${token}`
+    );
+  });
+}
+
 export async function ensureClaudeDashboardRegistration(
   url: string,
-  dependencies: Partial<ClaudeSetupDependencies> = {}
+  dependencies: Partial<ClaudeSetupDependencies> = {},
+  /**
+   * Bearer token for the shared SSE server. Registered via `claude mcp add --header`, since
+   * with `security.requireSseAuth` on, a registration without it connects and gets 401s.
+   */
+  token?: string
 ): Promise<ClaudeSetupResult> {
   if (process.env.AGENT_RACK_TEST_SKIP_CLAUDE_SETUP === '1') {
     return { warning: 'Claude Code MCP setup skipped by the internal smoke-test flag.' };
@@ -293,7 +316,14 @@ export async function ensureClaudeDashboardRegistration(
     return commandFailure('inspect agent-rack', inspected);
   }
 
-  if (registration.exists && registration.type === 'sse' && sameUrl(registration.url, url)) {
+  // Matching URL is not sufficient when auth is on: each server process mints a fresh token, so
+  // a registration carrying the previous one points at the right place and still gets 401s.
+  if (
+    registration.exists &&
+    registration.type === 'sse' &&
+    sameUrl(registration.url, url) &&
+    registrationCarriesToken(registration, token)
+  ) {
     return {};
   }
 
@@ -336,6 +366,7 @@ export async function ensureClaudeDashboardRegistration(
       'sse',
       '--scope',
       registration.scope,
+      ...(token ? ['--header', `Authorization: Bearer ${token}`] : []),
       'agent-rack',
       url,
     ]);

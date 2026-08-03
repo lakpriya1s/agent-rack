@@ -97,9 +97,15 @@ Two execution models, pick based on how long the task runs and whether you need 
 - **Synchronous — `agent_run`** blocks until the sub-agent finishes and hands back its output
   directly. Simplest option for one-shot tasks.
 - **Asynchronous — `agent_session_*`** starts a sub-agent in the background and returns a
-  `sessionId` immediately. Poll `agent_session_status`, stream `agent_session_logs`, push
-  follow-up input with `agent_session_send`, or stop it early with `agent_session_cancel`. Use
-  this for anything long-running or that you want to monitor or steer mid-flight.
+  `sessionId` immediately. Poll `agent_session_status`, stream `agent_session_logs`, or stop it
+  early with `agent_session_cancel`. Use this for anything long-running or that you want to
+  monitor mid-flight.
+
+> **Follow-up input is transport-specific.** `agent_session_send` only works for agents that
+> keep an input channel open — today that means the interactive/PTY transport (`opencode`).
+> `claude`, `codex`, and `agy` take their prompt as a command-line argument and exit when the
+> turn ends, so there is no second turn to send to; calling `agent_session_send` on them returns
+> a clear error. Check `supportsFollowUp` in `agent_list_available` or on the session info.
 
 Every configured agent also gets a shorthand tool — `claude_run`, `codex_run`, `agy_run`,
 `opencode_run` — identical to `agent_run` but with `agent` pre-filled.
@@ -116,11 +122,22 @@ No parameters. Lists every configured agent and whether its binary is on `$PATH`
     "command": "claude",
     "transport": "claude_stream_json",
     "description": "Claude Code CLI streaming JSON agent",
-    "status": "available"
+    "status": "available",
+    "capabilities": {
+      "supportsFollowUp": false,
+      "supportsStreaming": true,
+      "supportsNativeReadOnly": true,
+      "promptTransport": "argv"
+    },
+    "executionPolicy": "workspace-write",
+    "policyWarning": "Claude Code has no filesystem sandbox; 'workspace-write' is enforced by permission prompts and instructions only."
   },
   { "agentId": "codex", "...": "...", "status": "missing_binary" }
 ]
 ```
+
+`policyWarning` is `null` when the agent's CLI genuinely enforces the configured
+[execution policy](#execution-policy). Today only `codex` does.
 
 ### `agent_run`
 
@@ -138,8 +155,8 @@ if the agent used any tools while running.
 
 ### `agent_session_create`
 
-Same parameters as `agent_run` (`agent`, `prompt` required; `workspace`, `mode`, `model` optional).
-Returns session info immediately instead of blocking:
+Same execution parameters as `agent_run` (`agent`, `prompt` required; `workspace`, `mode`,
+`model`, `timeoutSeconds` optional). Returns session info immediately instead of blocking:
 
 ```json
 {
@@ -149,9 +166,16 @@ Returns session info immediately instead of blocking:
   "status": "running",
   "createdAt": "2026-08-01T12:00:00.000Z",
   "workspace": "/Users/you/project",
-  "eventCount": 0
+  "eventCount": 0,
+  "droppedEventCount": 0,
+  "nextCursor": 0,
+  "kind": "task",
+  "supportsFollowUp": false
 }
 ```
+
+This tool always creates a `task` session. Review sessions come only from
+[`agent_review`](#agent_review), which is the sole path that applies read-only enforcement.
 
 ### `agent_session_status`
 
@@ -160,30 +184,60 @@ Returns session info immediately instead of blocking:
 | `sessionId` | string | yes | Session to query |
 
 Returns the same shape as `agent_session_create`, updated with current `status`
-(`running` \| `idle` \| `completed` \| `failed` \| `cancelled`), `summary` once available, and
-`review` if this was an `agent_review` background session.
+(`running` \| `cancelling` \| `completed` \| `failed` \| `cancelled`), `summary` once available,
+and `review` if this was an `agent_review` background session.
+
+`cancelling` means the child has been signalled but has not exited yet; it still counts against
+`security.maxConcurrentSessions` until it does.
+
+`eventCount` is a **monotonic total** of every event the session has produced, including events
+already evicted from the retained tail. It is safe to compare across polls to detect progress.
 
 ### `agent_session_send`
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `sessionId` | string | yes | Target session (must still be `running`) |
-| `message` | string | yes | Text written to the sub-agent's stdin |
+| `message` | string | yes | Text written to the sub-agent's input channel |
+
+Only supported for transports where `supportsFollowUp` is `true` (the PTY transport, e.g.
+`opencode`). One-shot CLIs return an error explaining that no input channel exists.
 
 ### `agent_session_logs`
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `sessionId` | string | yes | — | Session to read events from |
-| `offset` | number | no | `0` | Skip this many events from the start of the current bounded snapshot |
+| `cursor` | number | no | `0` | Return events at or after this cursor. Pass the previous response's `nextCursor` to poll incrementally |
+| `tail` | number | no | — | Instead of a cursor, return only the most recent N events |
 | `limit` | number | no | all remaining | Max events to return |
 
-Session logs retain the most recent 512 parsed events. Calling without `offset` returns that current
-bounded snapshot; clients that continuously monitor logs should refresh the snapshot rather than
-use a cumulative offset after the buffer rolls over.
+Returns a page rather than a bare array:
 
-Returns the raw `ParsedAgentEvent[]` stream (`text`, `tool_call`, `tool_result`, `thought`,
-`status`, or `error` events), each with a timestamp — useful for tailing a long-running session.
+```json
+{
+  "events": [{ "type": "text", "content": "...", "timestamp": 1754000000000 }],
+  "nextCursor": 1842,
+  "oldestCursor": 1330,
+  "totalEvents": 1842,
+  "droppedCount": 0
+}
+```
+
+Cursors are monotonic and survive eviction, so incremental polling keeps working for the whole
+life of a session. Retention is bounded by both an event count (512) and a byte budget
+(`security.maxSessionOutputBytes`), since a single tool result can carry megabytes.
+`droppedCount` is non-zero when your cursor had already scrolled out of the retained window.
+
+### `agent_session_delete`
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `sessionId` | string | yes | Finished session to forget |
+
+Frees a finished session's retained log. Sessions are also pruned automatically per
+`security.sessionRetentionMinutes` and `security.maxRetainedSessions`; running sessions are
+never pruned and cannot be deleted until cancelled.
 
 ### `agent_session_cancel`
 
@@ -366,11 +420,92 @@ cp agent-rack.config.example.json agent-rack.config.json
 | --- | --- |
 | `transport` | `stdio` (default, for per-client local IDE integration) or `sse` (localhost HTTP-SSE, for a shared server and dashboard) |
 | `port` | HTTP port when `transport` is `sse` (default `8987`) |
-| `allowedWorkspaces` | Absolute directory paths agents are permitted to touch. Every tool call is validated against this list before any subprocess spawns — this is the entire security boundary. |
-| `agents` | Map of agent id → `{ name, command, args, transport, env, description, model }` |
-| `security.sanitizeEnv` | Strip env vars matching secret/password/token patterns before spawning agents (default `true`) |
+| `allowedWorkspaces` | Absolute directory paths agents may be **launched in**. Every tool call resolves symlinks and validates against this list before any subprocess spawns. See the caveat under [Security model](#security-model) — this constrains the working directory, not everything the process can reach. |
+| `agents` | Map of agent id → `{ name, command, args, transport, env, description, model, inheritEnv }` |
+| `security.executionPolicy` | `read-only` \| `workspace-write` (default) \| `danger-full-access`. See [Execution policy](#execution-policy). |
+| `security.sanitizeEnv` | Strip env vars matching credential patterns before spawning agents (default `true`). Prefer per-agent `inheritEnv`. |
+| `security.requireSseAuth` | Require a bearer token on the SSE transport (default `true`). See [SSE authentication](#sse-authentication). |
 | `security.maxConcurrentSessions` | Cap on simultaneously running background sessions (default `5`) |
 | `security.defaultTimeoutSeconds` | Default execution timeout per run, in seconds (default `600`) |
+| `security.sessionRetentionMinutes` | How long finished sessions stay queryable before pruning (default `60`) |
+| `security.maxRetainedSessions` | Hard cap on retained finished sessions, oldest pruned first (default `200`) |
+| `security.maxSessionOutputBytes` | Byte budget for one session's retained event log (default `5000000`) |
+
+## Security model
+
+Read this before pointing agent-rack at anything you care about.
+
+**`allowedWorkspaces` is not a filesystem sandbox.** It validates the directory an agent is
+*launched in*, with symlinks resolved, and that check runs before every spawn. It does not
+confine the process afterwards: a sub-agent that can run shell commands can still read absolute
+paths outside the workspace, reach the network, and execute other programs. Treat
+`allowedWorkspaces` as "where work happens", and `executionPolicy` as "how much authority the
+agent has".
+
+### Execution policy
+
+`security.executionPolicy` decides how much authority sub-agents get. agent-rack translates it
+into each CLI's real flags and, under anything short of `danger-full-access`, **strips
+permission/sandbox escape-hatch flags** from the agent's configured `args` — otherwise a
+leftover `--dangerously-*` would silently nullify the policy.
+
+| Policy | codex | claude | agy / opencode |
+| --- | --- | --- | --- |
+| `read-only` | `--sandbox read-only` (enforced) | `--permission-mode plan` (enforced) | prompt-level only |
+| `workspace-write` (default) | `--sandbox workspace-write` (enforced) | `--permission-mode acceptEdits` (prompt-gating only) | prompt-level only |
+| `danger-full-access` | `--sandbox danger-full-access` + escape hatch | `--permission-mode bypassPermissions` + escape hatch | unrestricted |
+
+Only `codex` ships a real OS-level sandbox. Claude Code's permission modes gate *prompting*, not
+filesystem access, and `agy`/`opencode` have neither — so for those, a policy is best-effort. Run
+`agent-rack agents` or check `policyWarning` in `agent_list_available` to see exactly which of
+your agents can enforce what; agent-rack never claims enforcement it cannot deliver.
+
+A per-call `mode` may **narrow** authority but never exceed the policy: passing
+`mode: "bypassPermissions"` under `read-only` is rejected, so the policy is a real ceiling rather
+than a default.
+
+`agent_review` always runs at `read-only` regardless of the ambient policy.
+
+### Environment variables
+
+A denylist can never be complete, so prefer the per-agent allowlist:
+
+```json
+"codex": {
+  "inheritEnv": ["OPENAI_API_KEY"]
+}
+```
+
+With `inheritEnv` set, **only** those variables (plus the baseline a process needs to start at
+all: `PATH`, `HOME`, `TMPDIR`, …) are passed to that agent. Without it, `security.sanitizeEnv`
+applies a pattern denylist covering `*_API_KEY`, `*TOKEN*`, `AWS_*`, `GITHUB_*`, `NPM_*`,
+`*SECRET*`, `*PASSWORD*`, cookies, `DATABASE_URL`, `KUBECONFIG`, and more. Values are redacted
+from `config-check` output.
+
+### SSE authentication
+
+With `transport: "sse"`, agent-rack binds to `127.0.0.1` **and** requires a bearer token by
+default. Loopback binding alone is not access control: any local process — including a web page
+in your browser via DNS rebinding — can reach a loopback port, and every tool here can spawn
+processes and read other clients' session output.
+
+Three checks run before any MCP handling:
+
+1. A valid `Authorization: Bearer <token>` (or `X-Agent-Rack-Token`), compared in constant time.
+2. No `Origin` header — any browser origin is rejected outright.
+3. A loopback `Host` header, which is what defeats DNS rebinding.
+
+The token is generated per server process and published to
+`~/.config/agent-rack/runtime/sse-<port>.json` (mode `0600`), so agent-rack's own dashboard and
+`session` commands find it with no setup. It is removed when the server shuts down. For other
+clients, send that token as a bearer header, or set `AGENT_RACK_TOKEN` before starting to pin
+your own. `agent-rack dashboard` registers Claude Code with a matching `--header` automatically.
+
+**Scope of this protection:** it stops browser-origin and unauthenticated local requests, which
+is the realistic attack. It does *not* isolate you from your own account — a process running as
+your user can read the token file, just as it could read your config. Same-user isolation is not
+achievable here and is not claimed. Set `requireSseAuth: false` to disable auth; the server
+warns loudly on startup when you do.
 
 ### Changing models
 
@@ -386,7 +521,7 @@ or change it:
    "codex": {
      "name": "Codex CLI",
      "command": "codex",
-     "args": ["exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"],
+     "args": ["exec", "--json", "--skip-git-repo-check"],
      "transport": "codex_exec_json",
      "model": "gpt-5.5"
    }
@@ -565,11 +700,18 @@ babysit a PR's CI. Like `dashboard --connect`, they only poll an already-running
 server and never auto-start, stop, or take ownership of it; if none is reachable they exit `1`
 with a pointer to `agent-rack start --transport sse` or `agent-rack dashboard`.
 
+These commands read the server's auth token from `~/.config/agent-rack/runtime/sse-<port>.json`
+automatically. For a server running elsewhere, set `AGENT_RACK_TOKEN` or append `?token=<token>`
+to `--connect`.
+
 `status` prints one line per session, cheap to diff against a previous poll to detect a change:
 
 ```
 sessionId=3f9c2b7a-1e4d-4a2b-9c3e-8f7a6b5c4d3e agent=codex kind=task status=running events=4 summary=""
 ```
+
+`events` is a monotonic total, so it keeps advancing for the life of the session — it does not
+plateau once the retained log hits its cap, which is what makes change detection reliable here.
 
 `tail` prints the session's most recent activity — actual text/tool-call content, not just a
 status word — once you've detected a change and want to show what the sub-agent is actually
@@ -629,19 +771,25 @@ non-zero with the validation error if something's wrong.
 agent-rack agents [-c, --config <path>]
 ```
 
-Lists every configured agent and probes `$PATH` to confirm its binary is actually reachable.
+Lists every configured agent, probes `$PATH` to confirm its binary is reachable, and reports what
+each transport can actually do under the current execution policy.
 
 ```
-Registered Agents Status:
+Registered Agents Status (executionPolicy: workspace-write):
 
  ✓ [claude] Claude Code CLI (claude) -> AVAILABLE
    Transport: claude_stream_json
-   Args: --dangerously-skip-permissions --output-format json
+   Args: --output-format json
+   Follow-up input: no (one-shot; agent_session_send will refuse)
+   ! Claude Code has no filesystem sandbox; 'workspace-write' is enforced by permission prompts and instructions only.
 
  ✗ [codex] Codex CLI (codex) -> MISSING BINARY
    Transport: codex_exec_json
-   Args: exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox
+   Args: exec --json --skip-git-repo-check
+   Follow-up input: no (one-shot; agent_session_send will refuse)
 ```
+
+An agent with no `!` line — like `codex` above — is one whose CLI genuinely enforces the policy.
 
 ### `snippet`
 

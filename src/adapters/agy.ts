@@ -1,7 +1,25 @@
-import { AgentAdapter, ParsedAgentEvent, FormattedResult } from './base.js';
+import {
+  AgentAdapter,
+  AgentCapabilities,
+  ParsedAgentEvent,
+  FormattedResult,
+  describeEmptyResult,
+} from './base.js';
 
 export class AgyStreamAdapter implements AgentAdapter {
   readonly transportType = 'agy_stream';
+
+  /**
+   * `agy --print` is one-shot with the prompt as argv, and exposes no sandbox or permission
+   * flag — so a read-only run here is prompt-level best effort, never a guarantee.
+   */
+  readonly capabilities: AgentCapabilities = {
+    supportsFollowUp: false,
+    supportsStreaming: true,
+    supportsNativeReadOnly: false,
+    promptTransport: 'argv',
+  };
+
   private buffer = '';
 
   constructor(private defaultArgs: string[] = ['--print']) {}
@@ -64,6 +82,14 @@ export class AgyStreamAdapter implements AgentAdapter {
     return events;
   }
 
+  /** Emits a final line that arrived without its trailing newline. */
+  flush(): ParsedAgentEvent[] {
+    const tail = this.buffer.trim();
+    this.buffer = '';
+    if (!tail) return [];
+    return this.parseChunk(tail + '\n');
+  }
+
   formatResponse(events: ParsedAgentEvent[], exitCode: number = 0): FormattedResult {
     const textBlocks: string[] = [];
     const toolCalls: Array<{ name: string; input: unknown; output?: unknown }> = [];
@@ -82,7 +108,7 @@ export class AgyStreamAdapter implements AgentAdapter {
 
     let summary = textBlocks.join('\n').trim();
     if (!summary) {
-      summary = `AGY execution completed with exit code ${exitCode}.`;
+      summary = describeEmptyResult(events, exitCode, toolCalls.length);
     }
 
     return {

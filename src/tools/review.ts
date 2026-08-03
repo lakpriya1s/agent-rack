@@ -2,20 +2,14 @@ import { AgentMCPConfig } from '../config/schema.js';
 import { SessionManager } from '../engine/session.js';
 import { validateWorkspacePath } from '../security/workspace.js';
 import { MCPToolDefinition } from './unified.js';
-import {
-  applyModelOverride,
-  requireAgentConfig,
-  resolveModel,
-  resolveTimeoutSeconds,
-  resolveWorkspace,
-} from './args.js';
+import { resolveExecution, resolveTimeoutSeconds, resolveWorkspace } from './args.js';
+import { resolvePolicySupport } from '../security/policy.js';
 import {
   buildReviewPrompt,
-  getReadOnlyMode,
   hasChangesToReview,
+  resolveBaseRefToSha,
   reviewFromResult,
   ReviewOutput,
-  stripEscapeHatchArgs,
 } from '../engine/review.js';
 
 export function registerReviewTools(
@@ -88,10 +82,10 @@ export function registerReviewTools(
         throw new Error("baseRef is required when scope is 'branch'.");
       }
 
-      const agentConfig = requireAgentConfig(config, agentId);
+      // Spawn in the canonical path that was actually validated, matching SessionManager.
+      const { canonicalPath } = validateWorkspacePath(workspace, config.allowedWorkspaces);
 
-      validateWorkspacePath(workspace, config.allowedWorkspaces);
-      const hasChanges = await hasChangesToReview({ workspace, scope, baseRef });
+      const hasChanges = await hasChangesToReview({ workspace: canonicalPath, scope, baseRef });
       if (!hasChanges) {
         const emptyResult: ReviewOutput = {
           verdict: 'approve',
@@ -104,39 +98,51 @@ export function registerReviewTools(
         };
       }
 
-      const readOnlyMode = getReadOnlyMode(agentConfig.transport);
+      // A review always runs under the read-only policy regardless of the server's configured
+      // executionPolicy: escape-hatch flags are stripped and the transport's native read-only
+      // mode is selected. This is the one place that overrides the ambient policy downward.
+      const { agentConfig: effectiveAgentConfig, mode: readOnlyMode } = resolveExecution(
+        config,
+        agentId,
+        args,
+        { policy: 'read-only', ignoreRequestedMode: true }
+      );
+      const { isNativelyEnforced } = resolvePolicySupport(effectiveAgentConfig.transport, 'read-only');
 
-      // When a native read-only mode is requested, the agent's configured escape-hatch
-      // flags (--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox)
-      // would nullify it, so strip them for this run only.
-      const readOnlyAgentConfig =
-        readOnlyMode !== undefined ? stripEscapeHatchArgs(agentConfig) : agentConfig;
-      const effectiveAgentConfig = applyModelOverride(readOnlyAgentConfig, resolveModel(args, agentConfig));
+      // The prompt tells the sub-agent to run a git command, and that agent will likely run it
+      // through a shell — so what lands in the prompt is a SHA git itself produced, never the
+      // caller's ref string.
+      const baseSha =
+        scope === 'branch' ? await resolveBaseRefToSha(canonicalPath, baseRef!) : undefined;
 
       const prompt = buildReviewPrompt({
         scope,
-        baseRef,
+        baseRef: baseSha,
         adversarial,
         focus,
-        readOnlyEnforced: readOnlyMode !== undefined,
+        readOnlyEnforced: isNativelyEnforced,
       });
 
-      if (background) {
-        const session = sessionManager.createSession(agentId, prompt, workspace, readOnlyMode, {
-          kind: 'review',
-          timeoutSeconds,
-          agentConfigOverride: effectiveAgentConfig,
-        });
-        return {
-          content: [{ type: 'text', text: JSON.stringify(session.getInfo(), null, 2) }],
-        };
-      }
-
-      const session = sessionManager.createSession(agentId, prompt, workspace, readOnlyMode, {
+      const session = sessionManager.createSession(agentId, prompt, canonicalPath, readOnlyMode, {
         kind: 'review',
         timeoutSeconds,
         agentConfigOverride: effectiveAgentConfig,
       });
+
+      if (background) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                { ...session.getInfo(), readOnlyEnforcement: isNativelyEnforced ? 'native' : 'prompt-only' },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
       const result = await sessionManager.waitForSession(session.id);
 
       return {

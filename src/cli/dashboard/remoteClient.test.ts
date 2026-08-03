@@ -4,12 +4,12 @@ import os from 'os';
 import path from 'path';
 import type { AddressInfo } from 'net';
 import type http from 'http';
-import { startAgentMCPServer } from '../../server.js';
+import { startAgentMCPServer, type ManagedAgentMCPServer } from '../../server.js';
 import { DashboardRemoteClient } from './remoteClient.js';
 import { loadConfig } from '../../config/loader.js';
 import { fingerprintAgentMCPConfig } from '../../config/fingerprint.js';
 
-let runningServer: http.Server | undefined;
+let runningServer: ManagedAgentMCPServer | undefined;
 
 afterEach(async () => {
   if (!runningServer) return;
@@ -26,7 +26,8 @@ afterEach(async () => {
 async function startTestServer(configPath: string) {
   runningServer = await startAgentMCPServer({ transport: 'sse', port: 0, configPath });
   const port = (runningServer!.address() as AddressInfo).port;
-  return `http://localhost:${port}/sse`;
+  // Auth is on by default, so the token has to come along or every call 401s.
+  return { url: `http://localhost:${port}/sse`, token: runningServer!.agentRackToken };
 }
 
 describe('DashboardRemoteClient', () => {
@@ -83,8 +84,8 @@ describe('DashboardRemoteClient', () => {
 
     let client: DashboardRemoteClient | undefined;
     try {
-      const url = await startTestServer(configPath);
-      client = new DashboardRemoteClient(url);
+      const { url, token } = await startTestServer(configPath);
+      client = new DashboardRemoteClient(url, token);
       await client.connect();
 
       await expect(client.validateDashboardServer()).resolves.toEqual({
@@ -97,7 +98,7 @@ describe('DashboardRemoteClient', () => {
         },
       });
 
-      const created = await client.createSession('echoer', 'hello', dir, 'task');
+      const created = await client.createSession('echoer', 'hello', dir);
       expect(created.agentId).toBe('echoer');
       expect(created.kind).toBe('task');
 
@@ -112,7 +113,8 @@ describe('DashboardRemoteClient', () => {
       expect(found?.status).toBe('completed');
 
       const logs = await client.getSessionLogs(created.sessionId);
-      expect(logs.some((e) => e.content.includes('pong'))).toBe(true);
+      expect(logs.events.some((e) => e.content.includes('pong'))).toBe(true);
+      expect(logs.nextCursor).toBe(logs.totalEvents);
     } finally {
       try {
         await client?.close();
@@ -159,21 +161,29 @@ describe('DashboardRemoteClient', () => {
 
     let client: DashboardRemoteClient | undefined;
     try {
-      client = new DashboardRemoteClient(await startTestServer(configPath));
+      const started = await startTestServer(configPath);
+      client = new DashboardRemoteClient(started.url, started.token);
       await client.connect();
-      const created = await client.createSession('emitter', 'emit', dir, 'task');
+      const created = await client.createSession('emitter', 'emit', dir);
 
       let initialSnapshot = await client.getSessionLogs(created.sessionId);
       const initialDeadline = Date.now() + 5000;
       while (
-        initialSnapshot.at(-1)?.content !== 'initial-511' &&
+        initialSnapshot.events.at(-1)?.content !== 'initial-511' &&
         Date.now() < initialDeadline
       ) {
         await new Promise((resolve) => setTimeout(resolve, 25));
         initialSnapshot = await client.getSessionLogs(created.sessionId);
       }
-      expect(initialSnapshot).toHaveLength(512);
-      expect(initialSnapshot.at(-1)?.content).toBe('initial-511');
+      expect(initialSnapshot.events).toHaveLength(512);
+      expect(initialSnapshot.events.at(-1)?.content).toBe('initial-511');
+      expect(initialSnapshot.totalEvents).toBe(512);
+
+      // The retained window is full. This is the point where the old offset-based
+      // eventCount pinned at 512 and stopped changing, so a poller watching it concluded
+      // the agent had gone quiet exactly when it was still producing output.
+      const statusAtCap = await client.getSessionStatus(created.sessionId);
+      expect(statusAtCap.eventCount).toBe(512);
 
       fs.writeFileSync(triggerPath, 'continue');
       let status = await client.getSessionStatus(created.sessionId);
@@ -184,10 +194,22 @@ describe('DashboardRemoteClient', () => {
       }
       expect(status.status).toBe('completed');
 
+      // 16 more events arrived after the cap: the monotonic total must reflect them.
+      expect(status.eventCount).toBe(528);
+      expect(status.eventCount).toBeGreaterThan(statusAtCap.eventCount);
+      expect(status.droppedEventCount).toBe(16);
+
       const rolledSnapshot = await client.getSessionLogs(created.sessionId);
-      expect(rolledSnapshot).toHaveLength(512);
-      expect(rolledSnapshot[0]?.content).toBe('initial-16');
-      expect(rolledSnapshot.at(-1)?.content).toBe('rollover-527');
+      expect(rolledSnapshot.events).toHaveLength(512);
+      expect(rolledSnapshot.events[0]?.content).toBe('initial-16');
+      expect(rolledSnapshot.events.at(-1)?.content).toBe('rollover-527');
+      expect(rolledSnapshot.oldestCursor).toBe(16);
+      expect(rolledSnapshot.droppedCount).toBe(16);
+
+      // A cursor handed back earlier still resolves to only the events after it.
+      const incremental = await client.getSessionLogs(created.sessionId, initialSnapshot.nextCursor);
+      expect(incremental.events).toHaveLength(16);
+      expect(incremental.events[0]?.content).toBe('rollover-512');
     } finally {
       try {
         await client?.close();

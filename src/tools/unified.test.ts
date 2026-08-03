@@ -138,8 +138,13 @@ describe('agent_server_identity tool', () => {
   });
 });
 
-describe('agent_session_create tool kind param', () => {
-  it('creates a review-kind session when kind: "review" is passed', async () => {
+describe('agent_session_create', () => {
+  /**
+   * `kind: 'review'` used to be accepted here, producing a session the dashboard displayed as a
+   * review while it ran with ordinary write authority — none of agent_review's read-only mode,
+   * escape-hatch stripping, or git precheck applied. Only agent_review may mint a review now.
+   */
+  it('ignores a caller-supplied kind and always creates a task session', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mcp-unified-tool-'));
     try {
       const config = getDefaultConfig(dir);
@@ -156,7 +161,49 @@ describe('agent_session_create tool kind param', () => {
       });
       const sessionInfo = JSON.parse((response.content as any)[0].text);
 
-      expect(sessionInfo.kind).toBe('review');
+      expect(sessionInfo.kind).toBe('task');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not advertise a kind parameter at all', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mcp-unified-tool-'));
+    try {
+      const config = getDefaultConfig(dir);
+      const tools = registerUnifiedTools(config, new SessionManager(config));
+      const schema = tools.find((t) => t.name === 'agent_session_create')!.inputSchema as {
+        properties: Record<string, unknown>;
+      };
+
+      expect(schema.properties.kind).toBeUndefined();
+      // The README promised agent_session_create took the same execution params as agent_run,
+      // but timeoutSeconds was missing from the schema entirely.
+      expect(schema.properties.timeoutSeconds).toBeDefined();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('honours a per-session timeoutSeconds', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mcp-unified-tool-'));
+    try {
+      const config = getDefaultConfig(dir);
+      config.agents['echoer'] = echoArgsAgentConfig(dir);
+      const sessionManager = new SessionManager(config);
+      const created: Array<Record<string, unknown> | undefined> = [];
+      const original = sessionManager.createSession.bind(sessionManager);
+      sessionManager.createSession = ((agentId, prompt, workspace, mode, options) => {
+        created.push(options as Record<string, unknown>);
+        return original(agentId, prompt, workspace, mode, options);
+      }) as typeof sessionManager.createSession;
+
+      const tools = registerUnifiedTools(config, sessionManager);
+      await tools
+        .find((t) => t.name === 'agent_session_create')!
+        .handler({ agent: 'echoer', prompt: 'hi', workspace: dir, timeoutSeconds: 42 });
+
+      expect(created[0]?.timeoutSeconds).toBe(42);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

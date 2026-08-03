@@ -1,4 +1,9 @@
-import { AgentConfig, AgentMCPConfig } from '../config/schema.js';
+import { AgentConfig, AgentMCPConfig, ExecutionPolicy } from '../config/schema.js';
+import {
+  applyExecutionPolicy,
+  describeUnenforcedPolicy,
+  resolveExecutionMode,
+} from '../security/policy.js';
 
 /**
  * Shared coercion for the arguments every agent-facing tool accepts. MCP tool arguments
@@ -30,6 +35,50 @@ export function resolveModel(args: Record<string, unknown>, agentConfig: AgentCo
 export function applyModelOverride(agentConfig: AgentConfig, model: string | undefined): AgentConfig {
   if (!model) return agentConfig;
   return { ...agentConfig, args: [...agentConfig.args, '--model', model] };
+}
+
+export interface ResolvedExecution {
+  agentConfig: AgentConfig;
+  /** Mode to hand the adapter — policy-derived unless the caller asked for a narrower one. */
+  mode?: string;
+  /** Non-null when the transport cannot actually enforce the policy (best-effort only). */
+  policyWarning: string | null;
+}
+
+/**
+ * Single place every tool goes through to turn a request into a spawnable agent config.
+ *
+ * Both `agent_run` and `agent_review` used to assemble this themselves, which is how the
+ * escape-hatch flags ended up honoured in one path and stripped in the other. Routing every
+ * caller through here means a policy cannot be enforced in one tool and ignored in another.
+ */
+export function resolveExecution(
+  config: AgentMCPConfig,
+  agentId: string,
+  args: Record<string, unknown>,
+  overrides: {
+    policy?: ExecutionPolicy;
+    /**
+     * Ignore any `mode` in `args` and let the policy decide it outright. `agent_review` sets
+     * this: it must run at its own policy's mode, not at one a caller supplied.
+     */
+    ignoreRequestedMode?: boolean;
+  } = {}
+): ResolvedExecution {
+  const base = requireAgentConfig(config, agentId);
+  const policy = overrides.policy ?? config.security.executionPolicy;
+  const requestedMode =
+    overrides.ignoreRequestedMode || typeof args.mode !== 'string' ? undefined : args.mode;
+
+  const mode = resolveExecutionMode(base.transport, policy, requestedMode);
+  const policed = applyExecutionPolicy(base, policy);
+  const agentConfig = applyModelOverride(policed, resolveModel(args, base));
+
+  return {
+    agentConfig,
+    mode,
+    policyWarning: describeUnenforcedPolicy(base.transport, policy),
+  };
 }
 
 /** Looks up a configured agent, throwing the shared not-configured error when absent. */

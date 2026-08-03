@@ -2,6 +2,8 @@ export * from './config/schema.js';
 export * from './config/loader.js';
 export * from './security/workspace.js';
 export * from './security/env.js';
+export * from './security/policy.js';
+export * from './security/auth.js';
 export * from './adapters/index.js';
 export * from './engine/session.js';
 export * from './engine/process.js';

@@ -4,12 +4,13 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
+  assertSafeGitRef,
   extractAndValidateReview,
+  normalizeReview,
+  resolveBaseRefToSha,
   ReviewOutputSchema,
-  getReadOnlyMode,
   buildReviewPrompt,
   hasChangesToReview,
-  stripEscapeHatchArgs,
 } from './review.js';
 import { ClaudeStreamJsonAdapter } from '../adapters/claude.js';
 import { CodexExecJsonAdapter } from '../adapters/codex.js';
@@ -288,21 +289,6 @@ describe('extractAndValidateReview against real adapter output', () => {
   });
 });
 
-describe('getReadOnlyMode', () => {
-  it('maps codex_exec_json to read-only sandbox mode', () => {
-    expect(getReadOnlyMode('codex_exec_json')).toBe('read-only');
-  });
-
-  it('maps claude_stream_json to plan mode', () => {
-    expect(getReadOnlyMode('claude_stream_json')).toBe('plan');
-  });
-
-  it('returns undefined for transports without a native read-only mode', () => {
-    expect(getReadOnlyMode('agy_stream')).toBeUndefined();
-    expect(getReadOnlyMode('pty_interactive')).toBeUndefined();
-  });
-});
-
 describe('buildReviewPrompt', () => {
   it('builds a standard working-tree review prompt', () => {
     const prompt = buildReviewPrompt({
@@ -361,53 +347,6 @@ describe('buildReviewPrompt', () => {
 
     expect(prompt).toContain('MUST be read-only');
     expect(prompt).toContain('read-only by configuration');
-  });
-});
-
-describe('stripEscapeHatchArgs', () => {
-  const baseConfig = (overrides: Partial<AgentConfig>): AgentConfig => ({
-    name: 'Test',
-    command: 'test',
-    args: [],
-    transport: 'pty_interactive',
-    env: {},
-    ...overrides,
-  });
-
-  it('removes --dangerously-skip-permissions for claude_stream_json', () => {
-    const config = baseConfig({
-      transport: 'claude_stream_json',
-      args: ['--dangerously-skip-permissions', '--output-format', 'json'],
-    });
-
-    const stripped = stripEscapeHatchArgs(config);
-
-    expect(stripped.args).toEqual(['--output-format', 'json']);
-    // Original config is untouched.
-    expect(config.args).toContain('--dangerously-skip-permissions');
-  });
-
-  it('removes --dangerously-bypass-approvals-and-sandbox for codex_exec_json', () => {
-    const config = baseConfig({
-      transport: 'codex_exec_json',
-      args: ['exec', '--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox'],
-    });
-
-    const stripped = stripEscapeHatchArgs(config);
-
-    expect(stripped.args).toEqual(['exec', '--json', '--skip-git-repo-check']);
-  });
-
-  it('returns the config unchanged for transports without a known escape hatch', () => {
-    const config = baseConfig({ transport: 'agy_stream', args: ['--print'] });
-
-    expect(stripEscapeHatchArgs(config)).toBe(config);
-  });
-
-  it('returns the config unchanged when the escape-hatch flag is absent', () => {
-    const config = baseConfig({ transport: 'claude_stream_json', args: ['--output-format', 'json'] });
-
-    expect(stripEscapeHatchArgs(config)).toBe(config);
   });
 });
 

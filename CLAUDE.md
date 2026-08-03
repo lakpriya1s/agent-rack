@@ -62,11 +62,25 @@ all four agents
 `sha256:<hex>` — the identity two processes compare to decide whether they are running the same
 agent-rack (see the dashboard section).
 
-**security/** — `workspace.ts` (`validateWorkspacePath`) is the sandboxing boundary: every tool
-call resolves symlinks/realpaths and confirms the target is inside `allowedWorkspaces` before
-any subprocess spawns. `env.ts` (`sanitizeEnvironment`) strips env vars matching
-secret/password/token patterns before they reach a child process, and force-sets `PAGER=cat`
-and `CI=1` so agent CLIs behave non-interactively.
+**security/** — `workspace.ts` (`validateWorkspacePath`) is the *launch-directory* boundary:
+every tool call resolves symlinks/realpaths and confirms the target is inside
+`allowedWorkspaces` before any subprocess spawns, and callers spawn in the returned
+`canonicalPath` so the child's cwd is exactly what was validated. It is not an OS sandbox — it
+constrains where an agent starts, not what it can then reach; that is `policy.ts`'s job.
+`policy.ts` owns `ExecutionPolicy` (`read-only` | `workspace-write` | `danger-full-access`) and
+translates it per transport: `resolvePolicySupport` returns both the mode to pass *and*
+`isNativelyEnforced` (true only for codex's real `--sandbox`, and claude's `plan`), so no caller
+can accidentally promise enforcement a CLI does not provide; `resolveExecutionMode` rejects a
+per-call `mode` that escalates past the policy (otherwise the policy would be advisory);
+`applyExecutionPolicy` strips `ESCAPE_HATCH_ARGS` under any policy but `danger-full-access`.
+`env.ts` (`sanitizeEnvironment`) takes an options object: a per-agent `inheritEnv` allowlist
+wins when present (the only way to guarantee a secret never leaks), otherwise a broad pattern
+denylist applies; it force-sets `PAGER=cat` and `CI=1`. `redactSensitiveEnv` is used wherever
+config is rendered for a human. `auth.ts` is the SSE bearer-token layer: a per-process random
+token published to `~/.config/agent-rack/runtime/sse-<port>.json` at mode 0600, plus
+Origin-rejection and loopback-`Host` checks (the DNS-rebinding defence). It protects against
+browser-origin and unauthenticated local requests; it explicitly does not isolate same-user
+processes, and the docs must not claim otherwise.
 
 **adapters/** — One `AgentAdapter` interface (`base.ts`), one implementation per transport
 family, selected in `adapters/index.ts::createAdapter` by `AgentConfig.transport`:
@@ -82,28 +96,69 @@ includes an appended "### Tool Calls Executed" block) and `rawText` (the agent's
 output, with nothing appended). `agent_review`'s JSON extraction always parses `rawText`, never
 `summary` — the appended block would corrupt JSON parsing.
 
+Each adapter also declares `capabilities` (`AgentCapabilities`) and implements `flush()`:
+- `capabilities.supportsFollowUp` is true **only** for `pty_interactive`. The other transports
+  take the prompt as argv and exit when the turn ends, so there is no second turn — this is what
+  `agent_session_send` checks before doing anything. Do not "fix" this by switching `stdin` to
+  `pipe`; the absence of a second turn is a property of those CLIs, not of the spawn options.
+- `flush()` drains the adapter's held-back line buffer at exit. A CLI that exits without a
+  trailing newline would otherwise lose its final line — which for `claude --output-format json`
+  is the entire response. `AgentProcessController.finalizeResult` must call it before formatting.
+- stderr never goes through `parseChunk`. It is recorded as `status` events tagged
+  `stream: 'stderr'` (so a warning line cannot surface as agent text or corrupt review JSON) and
+  surfaces only via `describeEmptyResult` when there is no parseable output to explain a failure.
+- Codex correlates `tool_result` back to its `tool_call` by `item.id`, not by "most recent call" —
+  concurrent commands interleave, and last-wins attributed output to the wrong command.
+
 **engine/** — `process.ts` (`AgentProcessController`) spawns the child (execa for stdio
 transports, node-pty for `pty_interactive`), pipes chunks through the adapter, and enforces the
-timeout. `buffer.ts` (`EventRingBuffer`, 512 events) is what every session retains — session
-logs are a bounded tail, not a full transcript. `availability.ts` (`isBinaryAvailable`,
+timeout. `isProcessLive()` tracks whether a child is actually alive, which is deliberately
+*not* the same as the session's reported status (see the `cancelling` note below).
+`buffer.ts` (`EventRingBuffer`) is what every session retains — a bounded tail, not a full
+transcript — bounded by both an event count (512) and a byte budget, since one `tool_result` can
+carry megabytes. It is addressed by **monotonic cursors**, not array offsets: `totalEvents()`
+counts everything ever pushed and never plateaus, `getSince(cursor)` returns only what is new,
+and `BufferedEventPage.droppedCount` reports a gap. This matters because `eventCount` used to be
+the retained array length, which pinned at 512 forever — so any watcher diffing it concluded the
+agent had gone idle exactly when it was busiest. `availability.ts` (`isBinaryAvailable`,
 `listAgentAvailability`) probes configured binaries on `$PATH` and backs both the
 `agent_list_available` tool and the `agent-rack agents` command, which differ only in rendering.
 `session.ts` (`SessionManager`) owns session lifecycle for the async
 `agent_session_*` tools: concurrency limits (`security.maxConcurrentSessions`), workspace
 validation, and background promise tracking (session status flips as the underlying process
-settles). Sessions carry a `kind` of `task` or `review`; a `review` session parses its result
-into `ReviewOutput` on completion, which is how the dashboard's review view gets structured
-data for background reviews. `shutdown()` cancels running sessions and awaits their promises —
+settles). Three subtleties:
+- Status includes `cancelling` (running → cancelling → cancelled). Cancellation signals SIGINT
+  and escalates to SIGKILL after 3s, so a "cancelled" child is not immediately gone;
+  `activeProcessCount()` counts `cancelling` sessions and any with a live controller, otherwise
+  the concurrency cap could be exceeded during that grace window. The previously-declared `idle`
+  status was never assigned and has been removed.
+- `pruneSessions()` runs on every `createSession`, dropping terminal sessions past
+  `security.sessionRetentionMinutes` and trimming oldest-first to `maxRetainedSessions`. Every
+  `agent_run` lands in this map too, so without pruning a long-lived SSE server leaks
+  indefinitely. Running/cancelling sessions are never pruned.
+- Sessions carry a `kind` of `task` or `review`, but **only `agent_review` may create a `review`**.
+  `agent_session_create` no longer accepts `kind` at all: it used to, which produced a session the
+  dashboard *labelled* a review while it ran with ordinary write authority and none of the
+  read-only protections. The dashboard's review launcher now calls `agent_review` with
+  `background: true` instead.
+
+`shutdown()` cancels running sessions and awaits their promises —
 `startSSEServer`'s `close()` calls it, so killing the server never leaves orphaned children.
 `review.ts` holds the `agent_review` logic:
   - `buildReviewPrompt` composes scope (working-tree vs branch diff), stance (standard vs
     adversarial), and a fixed JSON contract instructing the agent to self-inspect via `git`
     rather than have the diff stuffed into the prompt.
-  - `getReadOnlyMode` / `stripEscapeHatchArgs`: native read-only enforcement is transport-
-    specific (`--sandbox read-only` for codex via mode, `--permission-mode plan` for claude);
-    since the default agent configs include escape-hatch flags that would otherwise nullify
-    this, those flags are stripped for review runs specifically. The prompt-level read-only
-    instruction is always included regardless, since native enforcement varies by CLI version.
+  - Read-only enforcement now comes from `security/policy.ts` (the review always resolves at
+    policy `read-only`), not from review-specific helpers. The prompt-level read-only
+    instruction is always included regardless, and when the transport cannot enforce it the
+    prompt says so explicitly rather than implying a guarantee.
+  - `assertSafeGitRef` / `resolveBaseRefToSha`: `baseRef` is interpolated into a command the
+    sub-agent is told to run, and that agent will likely run it through a shell — so the ref is
+    pattern-validated and then resolved to a 40-hex commit SHA via `git rev-parse`, and only the
+    SHA reaches the prompt. Never put a caller-supplied ref string in the prompt directly.
+  - `normalizeReview` repairs self-contradictory output (reversed line ranges; an `approve`
+    verdict above critical/high findings) instead of failing validation — rejecting would discard
+    every finding and fall back to raw text, which is strictly worse.
   - `extractAndValidateReview` / `findValidReviewObject`: agents wrap their JSON reply in
     prose and/or markdown fences unpredictably, so extraction tries every fenced block plus
     the raw text, and within each candidate walks the last `}` backwards looking for a valid
@@ -194,9 +249,23 @@ but must match each other.
 
 ## Key invariants to preserve
 
-- Every code path that spawns a subprocess must go through `validateWorkspacePath` first —
-  this is the entire security boundary against a client pointing an agent outside
-  `allowedWorkspaces`.
+- Every code path that spawns a subprocess must go through `validateWorkspacePath` first, and
+  spawn in the `canonicalPath` it returns. This stops a client pointing an agent at a directory
+  outside `allowedWorkspaces`; it is *not* an OS sandbox, and no doc may describe it as one.
+- Authority is decided in one place. Tools must resolve an agent config through
+  `tools/args.ts::resolveExecution`, never by reading `config.agents[id]` and spawning directly —
+  that is what let escape-hatch flags be stripped in `agent_review` and honoured in `agent_run`.
+  A per-call `mode` may narrow authority but never exceed `security.executionPolicy`.
+- `danger-full-access` is the only policy under which an escape-hatch flag reaches a CLI. Never
+  add a `--dangerously-*` flag to a default or example config; the policy layer supplies it.
+- Never claim enforcement a CLI does not provide. If you add a transport, set
+  `supportsNativeReadOnly`/`isNativelyEnforced` honestly and add a `describeUnenforcedPolicy`
+  case; "we passed a flag" is not "the OS enforces it".
+- `eventCount` in `AgentSessionInfo` is the monotonic total, never the retained buffer length.
+  Anything used for change detection must not plateau.
+- `agent_session_send` must check `adapter.capabilities.supportsFollowUp` before touching the
+  process. Only `pty_interactive` supports it.
+- Only `agent_review` may create a session with `kind: 'review'`.
 - One `AgentMCPServerContext` (and therefore one `SessionManager`) per process, shared by every
   connection. Anything that constructs its own `SessionManager` for a live server breaks
   cross-client session visibility — the dashboard and `session` CLI both depend on it.
@@ -211,8 +280,15 @@ but must match each other.
 - Skill content lives only in `plugins/agent-rack/skills/` — it is consumed by the plugin, by
   `agent-rack cp`, and by `install`, and is listed in `package.json#files`.
 - New agent transports need: a schema entry in `AgentTransportTypeSchema`, an adapter
-  implementing `AgentAdapter`, a `case` in `createAdapter`, and (if it has a permission-skip
-  flag) an entry in `ESCAPE_HATCH_ARGS` and `getReadOnlyMode` in `engine/review.ts`.
+  implementing `AgentAdapter` (including `capabilities` and `flush()`), a `case` in
+  `createAdapter`, a branch in `security/policy.ts::resolvePolicySupport`, and — if it has a
+  permission-skip flag — an entry in `ESCAPE_HATCH_ARGS`.
+- Plugin and marketplace versions must equal `package.json`'s; `src/cli/versionSync.test.ts`
+  enforces it (they had silently drifted 0.1.3 vs 0.6.1 before it existed).
+- Client config files are written via `writeJsonFileAtomic` (temp file + fsync + rename, with a
+  `.bak`), never `writeFileSync` — a partial write leaves a client unable to start.
+- Installer functions return `InstallationResult`; `install`/`setup` set a non-zero exit code on
+  failure. Never print an error and return success.
 
 ## graphify
 
