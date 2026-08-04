@@ -1,6 +1,6 @@
 {
   "name": "agent-rack",
-  "version": "0.10.4",
+  "version": "0.10.5",
   "description": "MCP server that runs CLI AI coding agents (Claude Code, Codex, opencode, Antigravity) as sub-agents from any MCP client, with background sessions and structured code review",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,7 +19,7 @@
     "dist",
     "bin",
     "agent-rack.config.example.json",
-    "plugins/agent-rack/skills",
+    "plugins/agent-rack",
     "README.md",
     "SECURITY.md",
     "CHANGELOG.md"

@@ -28,52 +28,121 @@ export type ReviewOutput = z.infer<typeof ReviewOutputSchema> & {
   raw?: string;
 };
 
+/** Cap on fence markers considered, so a reply full of code blocks can't explode the search. */
+const MAX_FENCE_MARKERS = 24;
+
+/** Index just past a fence marker's language tag and newline, where its content begins. */
+function fenceContentStart(text: string, marker: number): number {
+  const newline = text.indexOf('\n', marker);
+  return newline === -1 ? text.length : newline + 1;
+}
+
 /**
- * Collects the contents of every markdown-fenced block in `text`.
- * Agents routinely emit prose, then a ```json fence, then more prose; and adapters
- * append their own trailing blocks (e.g. "### Tool Calls Executed"), so we cannot
- * assume the first fence is the right one.
+ * Collects candidate payloads from every markdown fence in `text`.
+ *
+ * Agents routinely emit prose, then a ```json fence, then more prose; and adapters append their
+ * own trailing blocks (e.g. "### Tool Calls Executed"), so the first fence is not necessarily
+ * the right one. Sequential open/close pairing is not enough either: a review that echoes a diff
+ * of a fence-heavy file (a README, say) emits an *odd* number of ``` markers, which
+ * desynchronizes the pairing and can leave the review's own ```json opener without a partner —
+ * its payload then belongs to no block at all. So every marker is treated as a potential opener
+ * on its own, taking both the text up to the next marker and the text through the end of the
+ * reply.
  */
 function collectFencedBlocks(text: string): string[] {
-  const blocks: string[] = [];
-  const fenceRegex = /```[a-zA-Z0-9_-]*[ \t]*\r?\n?([\s\S]*?)```/g;
-  let match: RegExpExecArray | null;
-  while ((match = fenceRegex.exec(text)) !== null) {
-    blocks.push(match[1]);
+  const markers: number[] = [];
+  for (let i = text.indexOf('```'); i !== -1; i = text.indexOf('```', i + 3)) {
+    markers.push(i);
   }
+
+  // Keep the *last* markers: the review payload is the agent's final word, so dropping early
+  // blocks costs less than dropping late ones.
+  const considered = markers.slice(-MAX_FENCE_MARKERS);
+
+  const blocks: string[] = [];
+  considered.forEach((marker, index) => {
+    const contentStart = fenceContentStart(text, marker);
+    const next = considered[index + 1];
+    if (next !== undefined && next > contentStart) {
+      blocks.push(text.slice(contentStart, next));
+    }
+    blocks.push(text.slice(contentStart));
+  });
+
   return blocks;
 }
 
-// Guard against pathological O(n^2) scanning on very large outputs.
-const MAX_JSON_END_ATTEMPTS = 200;
+// Guards against pathological O(n^2) scanning on very large outputs.
+const MAX_JSON_END_ATTEMPTS_PER_START = 50;
+const MAX_JSON_ATTEMPTS_TOTAL = 400;
+/** Cap on distinct `{` anchors tried, so start × end scanning stays bounded. */
+const MAX_JSON_START_ATTEMPTS = 12;
+
+/**
+ * Candidate opening braces for the payload, best first.
+ *
+ * The first `{` in the reply is usually the payload's — but not when the agent echoes a diff or
+ * a config snippet before answering, in which case that brace belongs to something else
+ * entirely and no choice of closing brace can rescue it. `verdict` is required by the schema, so
+ * a `{` preceding an occurrence of it is a far better anchor, and the *last* such occurrence
+ * best of all (the payload is the agent's final word).
+ */
+function candidateStartIndices(text: string): number[] {
+  const starts: number[] = [];
+  const push = (index: number): void => {
+    if (index !== -1 && !starts.includes(index) && starts.length < MAX_JSON_START_ATTEMPTS) {
+      starts.push(index);
+    }
+  };
+
+  const verdicts: number[] = [];
+  for (let i = text.indexOf('"verdict"'); i !== -1; i = text.indexOf('"verdict"', i + 1)) {
+    verdicts.push(i);
+  }
+
+  for (const verdict of verdicts.reverse()) {
+    const brace = text.lastIndexOf('{', verdict);
+    push(brace);
+    // One brace further back too, in case `verdict` sits after a nested object.
+    if (brace > 0) push(text.lastIndexOf('{', brace - 1));
+  }
+
+  push(text.indexOf('{'));
+
+  return starts;
+}
 
 /**
  * Searches `text` for a JSON object that both parses AND satisfies ReviewOutputSchema.
- * Starts at the first `{` and walks the closing brace backwards from the last `}`,
- * so trailing non-JSON prose (or an appended tool-calls block) doesn't defeat extraction.
+ * For each candidate opening brace it walks the closing brace backwards from the last `}`, so
+ * neither leading prose (an echoed diff) nor trailing prose (an appended tool-calls block)
+ * defeats extraction.
  */
 function findValidReviewObject(text: string): ReviewOutput | null {
-  const start = text.indexOf('{');
-  if (start === -1) return null;
+  let total = 0;
 
-  let end = text.lastIndexOf('}');
-  let attempts = 0;
+  for (const start of candidateStartIndices(text)) {
+    let end = text.lastIndexOf('}');
+    let attempts = 0;
 
-  while (end > start && attempts < MAX_JSON_END_ATTEMPTS) {
-    attempts++;
-    const candidate = text.slice(start, end + 1);
+    while (end > start && attempts < MAX_JSON_END_ATTEMPTS_PER_START) {
+      if (total >= MAX_JSON_ATTEMPTS_TOTAL) return null;
+      attempts++;
+      total++;
+      const candidate = text.slice(start, end + 1);
 
-    try {
-      const parsed = JSON.parse(candidate);
-      const result = ReviewOutputSchema.safeParse(parsed);
-      if (result.success) {
-        return result.data;
+      try {
+        const parsed = JSON.parse(candidate);
+        const result = ReviewOutputSchema.safeParse(parsed);
+        if (result.success) {
+          return result.data;
+        }
+      } catch {
+        // Not valid JSON at this boundary — try an earlier closing brace.
       }
-    } catch {
-      // Not valid JSON at this boundary — try an earlier closing brace.
-    }
 
-    end = text.lastIndexOf('}', end - 1);
+      end = text.lastIndexOf('}', end - 1);
+    }
   }
 
   return null;

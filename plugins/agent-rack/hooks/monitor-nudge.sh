@@ -22,6 +22,40 @@ if [ -z "$sid" ] || [ "$status" != "running" ]; then
   exit 0
 fi
 
-ctx="A background agent-rack session was just created via ${tool} (sessionId=${sid}, status=running). You MUST immediately start a Monitor watching agent-rack session status/tail for this sessionId (poll every ~2s, diff-based; stop once status is completed/failed/cancelled) so the user sees live progress in this chat. Do this now before anything else."
+# Placeholders rather than direct interpolation: the template is a quoted heredoc so that the
+# loop's own $cur/$prev survive into the instruction instead of being expanded here.
+#
+# `read -d ''` rather than `$(cat <<'EOF')`: bash 3.2 (still /bin/bash on macOS) re-parses a
+# heredoc inside command substitution, where a stray apostrophe reads as an unterminated quote
+# and the whole hook dies with a syntax error. `read` returns non-zero at EOF, hence `|| true`.
+read -r -d '' template <<'TEMPLATE' || true
+A background agent-rack session was just created via __TOOL__ (sessionId=__SID__,
+status=running). You MUST start a Monitor on it now, before anything else, so the user sees live
+progress in this chat.
+
+Emit BOTH the status line and the session's recent output on every change. Status alone is just a
+rising event count, which tells the user nothing about what the sub-agent is actually doing:
+
+prev=""
+while :; do
+  # Truncated: the status line embeds the session summary, which on completion is the agent's
+  # entire reply. The diffable fields (status, event count) are at the front.
+  cur=$(agent-rack session status __SID__ 2>&1)
+  cur=${cur:0:200}
+  if [ "$cur" != "$prev" ]; then
+    echo "$cur"
+    agent-rack session tail --count 3 __SID__ 2>&1
+    prev="$cur"
+  fi
+  case "$cur" in *status=completed*|*status=failed*|*status=cancelled*|*rror*) break ;; esac
+  sleep 2
+done
+
+Poll every ~2s and stop once status is completed/failed/cancelled (the loop above already does).
+If `agent-rack` is not on PATH, use `npx -y agent-rack` or a local `node bin/agent-rack.js`.
+TEMPLATE
+
+ctx=${template//__SID__/$sid}
+ctx=${ctx//__TOOL__/$tool}
 
 jq -n --arg ctx "$ctx" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $ctx}}'

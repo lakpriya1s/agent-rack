@@ -5,6 +5,34 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.10.5
+
+### Fixed
+
+- **A valid review is no longer discarded as unparseable when the agent echoes a fence-heavy
+  diff.** Reviewing a README-sized change made opencode emit an *odd* number of ` ``` ` markers,
+  which desynchronized `collectFencedBlocks`' sequential open/close pairing and left the review's
+  own ```json opener unpaired — its payload belonged to no block at all. The whole-text fallback
+  then failed too, because `findValidReviewObject` anchored on the *first* `{` in the reply (one
+  from the echoed diff, thousands of characters early) and only ever varied the closing brace.
+  Fences are now scanned marker-by-marker rather than in pairs, and candidate opening braces are
+  taken from each `"verdict"` occurrence, latest first, so leading prose cannot defeat extraction.
+- **The `monitor-nudge.sh` plugin hook no longer dies on macOS's bash 3.2.** Its heredoc lived
+  inside a `$(cat <<'EOF')`, which bash 3.2 re-parses — an apostrophe in the text read as an
+  unterminated quote and the hook exited with a syntax error, silently, because `hooks.json` runs
+  it with `2>/dev/null || true`. Now built with `read -r -d ''`.
+
+### Changed
+
+- **The monitor the hook asks for now reports content, not just a status word.** It prints the
+  status line *and* `agent-rack session tail --count 3` on every change, so the user sees what the
+  sub-agent is generating rather than a rising event count. The status line is truncated to 200
+  characters because it embeds the session summary, which on completion is the agent's entire
+  reply.
+- **The npm tarball now ships the whole `plugins/agent-rack` directory**, not just `skills/` — so
+  `hooks/`, `.claude-plugin/`, and `.mcp.json` are included rather than reaching users only via a
+  marketplace (git) install.
+
 ## 0.10.4
 
 ### Changed

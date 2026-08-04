@@ -195,6 +195,53 @@ describe('extractAndValidateReview', () => {
     expect(review.summary).toBe('All clear.');
   });
 
+  it('recovers the review when an echoed fence-heavy diff leaves an odd number of ``` markers', () => {
+    // Reproduces a real opencode review of a README change: the agent echoed diff hunks that
+    // themselves contained ``` fences, so sequential open/close pairing desynchronized and the
+    // review's own ```json opener was left unpaired — its payload belonged to no block at all.
+    const payload = {
+      verdict: 'approve',
+      summary: 'Docs only.',
+      findings: [],
+      next_steps: [],
+    };
+    const raw =
+      '### Fixed\ndiff --git a/README.md b/README.md\n' +
+      '@@ -1,3 +1,4 @@\n+```sh\n+npx agent-rack setup\n+```\n' +
+      '@@ -40,2 +41,3 @@\n+```json\n+{ "mcpServers": { "agent-rack": {} } }\n' +
+      '\nHere is my review:\n\n```json\n' +
+      JSON.stringify(payload, null, 2) +
+      '\n```\n';
+
+    // The precondition that used to break extraction: an odd marker count, and a `{` from the
+    // echoed diff sitting far ahead of the payload's own.
+    expect((raw.match(/```/g) ?? []).length % 2).toBe(1);
+    expect(raw.indexOf('{')).toBeLessThan(raw.indexOf('"verdict"'));
+
+    const review = extractAndValidateReview(raw);
+    expect(review.parseError).toBeUndefined();
+    expect(review.verdict).toBe('approve');
+    expect(review.summary).toBe('Docs only.');
+  });
+
+  it('anchors on the payload brace when unrelated JSON objects precede it, unfenced', () => {
+    const payload = {
+      verdict: 'needs-attention',
+      summary: 'One issue.',
+      findings: [],
+      next_steps: ['Fix it.'],
+    };
+    const raw =
+      '$ cat package.json\n{ "name": "agent-rack", "version": "0.10.4" }\n' +
+      '$ git log --oneline\n{ not json at all\n' +
+      JSON.stringify(payload);
+
+    const review = extractAndValidateReview(raw);
+    expect(review.parseError).toBeUndefined();
+    expect(review.verdict).toBe('needs-attention');
+    expect(review.next_steps).toEqual(['Fix it.']);
+  });
+
   it('recovers the review with both leading and trailing prose and no fences', () => {
     const payload = {
       verdict: 'approve',
