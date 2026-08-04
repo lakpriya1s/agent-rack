@@ -5,6 +5,21 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.10.3
+
+### Changed
+
+- **README, npm metadata, and GitHub repository metadata reworked for discoverability.** The
+  README gained an `<h1>` (it previously had none — only a wordmark image, so there was no
+  indexable title), a contents list, a "What it's for" section, client/agent support tables, and
+  an FAQ; the package description and keywords were rewritten to name the four built-in agents
+  and the MCP-server/sub-agent terms people actually search for. No functional changes.
+
+### Fixed
+
+- **Broken in-README anchor link to the `agent_review` section** (`#agent_review`, which matched
+  no heading) now points at `#structured-code-review-agent_review`.
+
 ## 0.10.2
 
 ### Fixed

@@ -2,13 +2,17 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./assets/agent-rack-wordmark-dark.svg">
-  <img src="./assets/agent-rack-wordmark-light.svg" alt="agent-rack" width="480">
+  <img src="./assets/agent-rack-wordmark-light.svg" alt="agent-rack — MCP server that exposes CLI AI coding agents as MCP tools" width="480">
 </picture>
 
+# agent-rack — run CLI AI coding agents as MCP tools
+
 **Bridge any CLI coding agent into any MCP client**<br>
-Ships with Claude Code, Codex, opencode, and Antigravity built in.
+An MCP server for delegating work to Claude Code, Codex, opencode, and Antigravity sub-agents —
+from Claude Code, Claude Desktop, Cursor, VS Code, or any other MCP client.
 
 [![npm](https://img.shields.io/npm/v/agent-rack?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/agent-rack)
+[![npm downloads](https://img.shields.io/npm/dm/agent-rack?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/agent-rack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-339933.svg?logo=node.js&logoColor=white)](package.json)
 
@@ -30,6 +34,73 @@ It also ships a structured, adversarial-capable **code review** tool
 Antigravity.
 
 ---
+
+## Contents
+
+- [What it's for](#what-its-for) — why delegate to a CLI sub-agent at all
+- [Supported MCP clients and agents](#supported-mcp-clients-and-agents)
+- [Install](#install) — Claude Code plugin, `setup` wizard, or per-client `install`
+- [Requirements](#requirements)
+- [MCP tools](#mcp-tools) — `agent_run`, `agent_session_*`, per-agent shortcuts
+- [Skills](#skills) — slash commands for Claude Code, Cursor, Antigravity
+- [Structured code review (`agent_review`)](#structured-code-review-agent_review)
+- [How it works](#how-it-works) — adapters, engine, tools
+- [Configuration](#configuration) — `agent-rack.config.json`, adding an agent profile
+- [Security model](#security-model) — workspace boundary, execution policy, SSE auth
+- [CLI commands](#cli-commands) — `start`, `setup`, `dashboard`, `session`, `agents`, …
+- [Troubleshooting](#troubleshooting)
+- [FAQ](#faq)
+- [Connecting your own CLI agent](#connecting-your-own-cli-agent)
+- [Contributing](#contributing) · [License](#license)
+
+## What it's for
+
+The main thing agent-rack buys you is **another agent's context, not just another tool call**. A
+sub-agent reads files, runs commands, and reasons on its own budget, then hands back a result —
+so the work never lands in your main conversation's context window.
+
+- **Parallel sub-agents.** Fan several background sessions out at once (`agent_session_create`),
+  poll them, and collect results — a test-fixing session, a docs session, and a refactor session
+  running side by side.
+- **Second-opinion code review.** Have Codex review what Claude Code just wrote (or the reverse)
+  via [`agent_review`](#structured-code-review-agent_review), and get validated JSON findings
+  back instead of prose you have to re-read.
+- **Model and vendor diversity.** Your client stays whatever you like using; the sub-agent can be
+  a different CLI, a different vendor, and a different model per call
+  (see [Changing models](#changing-models)).
+- **Long-running work off the critical path.** Start a migration or a large test run as a
+  background session, keep working, and check on it with `agent_session_logs` or the
+  [terminal dashboard](#dashboard-alias-ui).
+- **One protocol for every CLI.** Any local CLI coding agent — including one that isn't built in
+  — becomes the same set of MCP tools everywhere
+  (see [Connecting your own CLI agent](#connecting-your-own-cli-agent)).
+
+You keep using whichever CLIs you already pay for: agent-rack drives the binaries on your
+`$PATH` with your existing logins. It never asks for an API key and never calls a model itself.
+
+## Supported MCP clients and agents
+
+Clients agent-rack can register itself with (see [Install](#install)):
+
+| MCP client | Command | Scope |
+| --- | --- | --- |
+| Claude Code | `agent-rack install --target claude` (or the [plugin](plugins/agent-rack/README.md)) | project or user |
+| Codex CLI | `agent-rack install --target codex` | user |
+| Claude Desktop | `agent-rack install --target desktop` | user (macOS path) |
+| Cursor | `agent-rack install --target cursor` | project or user |
+| Antigravity | `agent-rack install --target antigravity` | user |
+| OpenCode | `agent-rack install --target opencode` | user |
+| VS Code, GitHub Copilot, anything else | `agent-rack snippet vscode` → paste the JSON | — |
+
+Agents it can spawn as sub-agents:
+
+| Agent | Agent id | CLI | Transport | Follow-up input |
+| --- | --- | --- | --- | --- |
+| Claude Code | `claude` | `claude` | `claude_stream_json` | no |
+| Codex | `codex` | `codex` | `codex_exec_json` | no |
+| OpenCode | `opencode` | `opencode` | `pty_interactive` | yes |
+| Antigravity | `agy` | `agy` | `agy_stream` | no |
+| Your own CLI | anything | anything | `pty_interactive` or a [custom adapter](#connecting-your-own-cli-agent) | depends |
 
 ## Install
 
@@ -186,7 +257,8 @@ Same execution parameters as `agent_run` (`agent`, `prompt` required; `workspace
 ```
 
 This tool always creates a `task` session. Review sessions come only from
-[`agent_review`](#agent_review), which is the sole path that applies read-only enforcement.
+[`agent_review`](#structured-code-review-agent_review), which is the sole path that applies
+read-only enforcement.
 
 ### `agent_session_status`
 
@@ -913,6 +985,54 @@ install at all), then restart the client.
 if none match yours, npm falls back to compiling from source, which needs a working C++
 toolchain (Xcode Command Line Tools on macOS, `build-essential` on Debian/Ubuntu). Confirm
 you're on Node 20+ first.
+
+## FAQ
+
+**What is agent-rack, in one sentence?** An MCP server that exposes local CLI AI coding agents
+(`claude`, `codex`, `opencode`, `agy`) as MCP tools, so any MCP client can spawn and drive them
+as sub-agents.
+
+**Do I need an API key?** No. agent-rack spawns the CLI binaries already on your `$PATH` and
+inherits whatever authentication they use, so you keep using the subscriptions and logins you
+already have. It never talks to a model provider itself.
+
+**Do I have to write a config file?** No. With no `agent-rack.config.json` anywhere, all four
+built-in agents are configured and scoped to the directory your MCP client launched the server
+from. [Configuration](#configuration) is only for changing that.
+
+**Can I run several sub-agents at once?** Yes — that's what `agent_session_create` is for.
+Concurrency is capped by `security.maxConcurrentSessions` (default `5`), and you can watch every
+running session from the [terminal dashboard](#dashboard-alias-ui) or
+[`agent-rack session`](#session-status--session-tail--session-list).
+
+**Is this a sandbox?** No, and it's important not to read it as one.
+`allowedWorkspaces` constrains *where an agent starts*, not what it can then reach, and the
+[execution policy](#execution-policy) is only natively enforced where the underlying CLI actually
+enforces it (today: codex's `--sandbox`, and claude's plan mode). See the
+[security model](#security-model) and [SECURITY.md](./SECURITY.md).
+
+**Can I use an agent that isn't one of the four built-ins?** Yes. Any ordinary interactive CLI
+works with a config entry and no code changes; a CLI that emits a JSON event stream can get a
+real adapter for structured `tool_call`/`tool_result` output. See
+[Connecting your own CLI agent](#connecting-your-own-cli-agent).
+
+**Why delegate to a CLI sub-agent instead of just doing the work in my main agent?** Context
+isolation and parallelism — see [What it's for](#what-its-for).
+
+**Does `agent_session_send` work with every agent?** No. Only agents on the interactive/PTY
+transport (`opencode` today) keep an input channel open. `claude`, `codex`, and `agy` take the
+prompt as an argv and exit at the end of the turn, so there is no second turn to send to. Check
+`supportsFollowUp` in [`agent_list_available`](#agent_list_available).
+
+**Which platforms are supported?** Node.js 20+ on macOS and Linux. `install --target desktop`
+writes the macOS Claude Desktop config path; on other platforms use
+[`agent-rack snippet`](#snippet) and paste the JSON in yourself.
+
+**Can the dashboard and my editor see the same sessions?** Yes, by default. Even a `stdio`
+server opens the SSE endpoint as a sidecar, so sessions your editor starts are immediately
+visible to the [dashboard](#dashboard-alias-ui) and
+[`agent-rack session`](#session-status--session-tail--session-list) — one session manager per
+process, shared by every connection. See [`start`](#start).
 
 ## Uninstall
 
