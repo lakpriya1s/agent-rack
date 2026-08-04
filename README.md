@@ -12,7 +12,6 @@ An MCP server for delegating work to Claude Code, Codex, opencode, and Antigravi
 from Claude Code, Claude Desktop, Cursor, VS Code, or any other MCP client.
 
 [![npm](https://img.shields.io/npm/v/agent-rack?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/agent-rack)
-[![npm downloads](https://img.shields.io/npm/dm/agent-rack?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/agent-rack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-339933.svg?logo=node.js&logoColor=white)](package.json)
 

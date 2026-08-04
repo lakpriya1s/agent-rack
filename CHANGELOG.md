@@ -5,6 +5,12 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.10.4
+
+### Changed
+
+- **Removed the npm downloads badge from the README.** No functional changes.
+
 ## 0.10.3
 
 ### Changed
