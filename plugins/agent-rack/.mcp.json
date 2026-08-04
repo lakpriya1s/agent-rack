@@ -1,6 +1,6 @@
 {
   "agent-rack": {
     "command": "npx",
-    "args": ["-y", "agent-rack@0.10.0", "start"]
+    "args": ["-y", "agent-rack@0.10.1", "start"]
   }
 }

@@ -5,6 +5,13 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.10.1
+
+### Fixed
+
+- **Stale version example in the README troubleshooting section** — the "stale global install
+  shadows the npx pin" note still showed `npm exec agent-rack@0.9.0 start` as its example.
+
 ## 0.10.0
 
 ### Added
