@@ -904,7 +904,7 @@ allowed.
 **A plugin/`npx` connection keeps running an old version** — `npx -y agent-rack@X start` prefers
 an `agent-rack` binary already resolvable on `$PATH` over fetching `@X` fresh, so a stale global
 install silently shadows the pin (you'll see the *requested* version in the process list, e.g.
-`npm exec agent-rack@0.9.0 start`, while the code that actually runs is whatever's installed
+`npm exec agent-rack@0.10.0 start`, while the code that actually runs is whatever's installed
 globally). Check with `agent-rack --version`; if it doesn't match, run
 `npm install -g agent-rack@latest` (or `npm uninstall -g agent-rack` if you don't want a global
 install at all), then restart the client.
