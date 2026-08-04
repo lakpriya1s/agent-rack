@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import type { OptionValueSource } from 'commander';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -361,6 +362,36 @@ function askYesNo(rl: readline.Interface, question: string, defaultYes: boolean)
   });
 }
 
+export interface ConfigInitTarget {
+  targetPath: string;
+  scopeDir: string;
+  isGlobal: boolean;
+}
+
+/**
+ * `pathOptionSource` must come from commander's `getOptionValueSource('path')`, not a string
+ * comparison against the default — otherwise a user redundantly typing `--path
+ * ./agent-rack.config.json` (the literal default) alongside `--global` would silently bypass
+ * the mutual-exclusivity check.
+ */
+export function resolveConfigInitTarget(
+  options: { path: string; global?: boolean },
+  pathOptionSource: OptionValueSource | undefined
+): ConfigInitTarget {
+  if (options.global && pathOptionSource === 'cli') {
+    throw new Error('Cannot combine --global with an explicit --path.');
+  }
+
+  const isGlobal = Boolean(options.global);
+  return {
+    targetPath: isGlobal ? path.resolve(os.homedir(), '.config', 'agent-rack', 'config.json') : options.path,
+    // A local project config should scope to that project; a global one covers every project
+    // under your home directory instead, since it has no single project to bind to.
+    scopeDir: isGlobal ? os.homedir() : process.cwd(),
+    isGlobal,
+  };
+}
+
 const INSTALL_TARGETS_HELP =
   'claude (Claude Code CLI), codex (Codex CLI), desktop (Claude Desktop App), cursor (Cursor), ' +
   'antigravity or agy (Antigravity), opencode (OpenCode). Any other value falls back to printing ' +
@@ -628,25 +659,22 @@ export function runCLI() {
         'your home directory rather than the current project — used by any project with no ' +
         'config file of its own'
     )
-    .action((options) => {
-      if (options.global && options.path !== './agent-rack.config.json') {
-        console.error('Cannot combine --global with an explicit --path.');
+    .action((options, command) => {
+      let target: ConfigInitTarget;
+      try {
+        target = resolveConfigInitTarget(options, command.getOptionValueSource('path'));
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
         return;
       }
 
-      const targetPath = options.global
-        ? path.resolve(os.homedir(), '.config', 'agent-rack', 'config.json')
-        : options.path;
-      // A local project config should scope to that project; a global one covers every project
-      // under your home directory instead, since it has no single project to bind to.
-      const config = getDefaultConfig(options.global ? os.homedir() : process.cwd());
-
-      saveConfig(config, targetPath);
+      const config = getDefaultConfig(target.scopeDir);
+      saveConfig(config, target.targetPath);
       console.log(
-        `Created starter ${options.global ? 'global ' : ''}configuration file at: ${path.resolve(targetPath)}`
+        `Created starter ${target.isGlobal ? 'global ' : ''}configuration file at: ${path.resolve(target.targetPath)}`
       );
-      if (options.global) {
+      if (target.isGlobal) {
         console.log(
           'Note: a project-local ./agent-rack.config.json always takes precedence over this ' +
             'file when one exists.'

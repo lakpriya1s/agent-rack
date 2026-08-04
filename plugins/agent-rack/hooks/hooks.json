@@ -1,9 +1,9 @@
 {
-  "description": "Nudges Claude to start a Monitor watching newly-launched agent-rack background sessions, so a human sees live progress without relying on the model remembering to do it.",
+  "description": "Nudges Claude to start a Monitor watching newly-launched agent-rack background sessions (including background agent_review runs), so a human sees live progress without relying on the model remembering to do it.",
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "mcp__agent-rack__agent_session_create|mcp__agent-rack__agent_run|mcp__agent-rack__claude_run|mcp__agent-rack__codex_run|mcp__agent-rack__opencode_run|mcp__agent-rack__agy_run|mcp__plugin_agent-rack_agent-rack__agent_session_create|mcp__plugin_agent-rack_agent-rack__agent_run|mcp__plugin_agent-rack_agent-rack__claude_run|mcp__plugin_agent-rack_agent-rack__codex_run|mcp__plugin_agent-rack_agent-rack__opencode_run|mcp__plugin_agent-rack_agent-rack__agy_run",
+        "matcher": "mcp__agent-rack__agent_session_create|mcp__agent-rack__agent_run|mcp__agent-rack__agent_review|mcp__agent-rack__claude_run|mcp__agent-rack__codex_run|mcp__agent-rack__opencode_run|mcp__agent-rack__agy_run|mcp__plugin_agent-rack_agent-rack__agent_session_create|mcp__plugin_agent-rack_agent-rack__agent_run|mcp__plugin_agent-rack_agent-rack__agent_review|mcp__plugin_agent-rack_agent-rack__claude_run|mcp__plugin_agent-rack_agent-rack__codex_run|mcp__plugin_agent-rack_agent-rack__opencode_run|mcp__plugin_agent-rack_agent-rack__agy_run",
         "hooks": [
           {
             "type": "command",

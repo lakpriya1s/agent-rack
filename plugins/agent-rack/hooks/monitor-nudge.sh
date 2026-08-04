@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # PostToolUse hook: when an agent-rack MCP tool call spawns a background sub-agent session
-# (agent_session_create, or a *_run shortcut called with background:true), inject a reminder to
-# start a Monitor watching its status/tail — so a human sees live progress without depending on
-# the model remembering to do it on its own.
+# (agent_session_create, a *_run shortcut, or agent_review — the latter two only when called
+# with background:true), inject a reminder to start a Monitor watching its status/tail — so a
+# human sees live progress without depending on the model remembering to do it on its own.
 #
 # Stays silent (exit 0, no output) for anything that isn't a fresh, still-running session: a
 # synchronous agent_run call, an unrelated tool, or malformed input all fall through harmlessly.

@@ -5,6 +5,29 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.10.2
+
+### Fixed
+
+- **`config init --global`'s mutual-exclusivity check with `--path` no longer relies on string
+  comparison against the default.** It previously detected an explicit `--path` by comparing
+  the option's value against the literal default string (`'./agent-rack.config.json'`) — so a
+  user who redundantly typed that same value alongside `--global` silently bypassed the check
+  instead of hitting the intended error, and the guard would have broken silently if that
+  default ever changed without the comparison being updated alongside it. It now asks commander
+  directly whether `--path` was actually passed on the command line
+  (`getOptionValueSource('path') === 'cli'`).
+
+### Added
+
+- **Unit tests for `config init --global`** covering the default path, the `--global`/`--path`
+  conflict (including the redundant-default-value edge case above), and plain `config init`
+  being unaffected.
+- **The plugin's monitor-nudge `PostToolUse` hook now also covers `agent_review`.** A background
+  `agent_review` run (`background: true`) returns the same `sessionId`/`status: "running"` shape
+  as `agent_session_create`, so it gets the same live-progress nudge; a foreground review is
+  unaffected since it has neither field.
+
 ## 0.10.1
 
 ### Fixed
