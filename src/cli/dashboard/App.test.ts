@@ -23,6 +23,8 @@ function session(sessionId: string): AgentSessionInfo {
     nextCursor: 0,
     kind: 'task',
     supportsFollowUp: false,
+    followUpMode: 'none',
+    turnCount: 1,
   };
 }
 

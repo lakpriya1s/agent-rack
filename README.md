@@ -95,11 +95,14 @@ Agents it can spawn as sub-agents:
 
 | Agent | Agent id | CLI | Transport | Follow-up input |
 | --- | --- | --- | --- | --- |
-| Claude Code | `claude` | `claude` | `claude_stream_json` | no |
-| Codex | `codex` | `codex` | `codex_exec_json` | no |
-| OpenCode | `opencode` | `opencode` | `pty_interactive` | yes |
+| Claude Code | `claude` | `claude` | `claude_stream_json` | yes — `resume` |
+| Codex | `codex` | `codex` | `codex_exec_json` | yes — `resume` |
+| OpenCode | `opencode` | `opencode` | `pty_interactive` | yes — `live` |
 | Antigravity | `agy` | `agy` | `agy_stream` | no |
 | Your own CLI | anything | anything | `pty_interactive` or a [custom adapter](#connecting-your-own-cli-agent) | depends |
+
+See [Follow-up input](#follow-up-input) for what `live` and `resume` mean — they need the session
+to be in *opposite* states.
 
 ## Install
 
@@ -182,11 +185,31 @@ Two execution models, pick based on how long the task runs and whether you need 
   early with `agent_session_cancel`. Use this for anything long-running or that you want to
   monitor mid-flight.
 
-> **Follow-up input is transport-specific.** `agent_session_send` only works for agents that
-> keep an input channel open — today that means the interactive/PTY transport (`opencode`).
-> `claude`, `codex`, and `agy` take their prompt as a command-line argument and exit when the
-> turn ends, so there is no second turn to send to; calling `agent_session_send` on them returns
-> a clear error. Check `supportsFollowUp` in `agent_list_available` or on the session info.
+### Follow-up input
+
+`agent_session_send` continues a session's conversation. *How* it does that — and therefore what
+status the session must be in — depends on the agent's `followUpMode`:
+
+| `followUpMode` | Agents | Send while the session is | Mechanism |
+| --- | --- | --- | --- |
+| `live` | `opencode` | **running** | Written straight to the still-running process. The only mode that can steer a turn mid-flight. |
+| `resume` | `claude`, `codex` | **finished** (`completed`) | The agent is restarted with its own resume flag (`claude --resume <session_id>`, `codex exec resume <thread_id>`), continuing the same conversation as a new turn. |
+| `none` | `agy` | — | No continuation; start a new session instead. |
+
+For a `resume` agent, a `completed` session is not a dead end — it's the precondition. Sending
+puts the session back to `status: "running"` and increments `turnCount`; sending *during* a turn
+is refused, because a resume spawns a new process and two children must not run against one
+conversation. A `cancelled` session is refused as well: its conversation was interrupted mid-turn.
+
+Continuity comes from the CLI's own session store, not from agent-rack — we pass the conversation
+id the CLI reported (`session_id` for claude, `thread_id` for codex) back to it. Antigravity is
+`none` because its `--print` output never reveals a per-run conversation id, and its `--continue`
+resumes "the most recent conversation" machine-wide, which would misroute a follow-up as soon as
+two sessions run at once.
+
+> **`live` follow-up is not the same as interrupting.** Only `opencode` can be sent input while
+> it is working. Check `followUpMode` in `agent_list_available` or on the session info before
+> telling a user they can steer a running turn.
 
 Every configured agent also gets a shorthand tool — `claude_run`, `codex_run`, `agy_run`,
 `opencode_run` — identical to `agent_run` but with `agent` pre-filled.
@@ -205,7 +228,8 @@ No parameters. Lists every configured agent and whether its binary is on `$PATH`
     "description": "Claude Code CLI streaming JSON agent",
     "status": "available",
     "capabilities": {
-      "supportsFollowUp": false,
+      "supportsFollowUp": true,
+      "followUp": "resume",
       "supportsStreaming": true,
       "supportsNativeReadOnly": true,
       "promptTransport": "argv"
@@ -251,7 +275,9 @@ Same execution parameters as `agent_run` (`agent`, `prompt` required; `workspace
   "droppedEventCount": 0,
   "nextCursor": 0,
   "kind": "task",
-  "supportsFollowUp": false
+  "supportsFollowUp": true,
+  "followUpMode": "resume",
+  "turnCount": 1
 }
 ```
 
@@ -279,11 +305,13 @@ already evicted from the retained tail. It is safe to compare across polls to de
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `sessionId` | string | yes | Target session (must still be `running`) |
-| `message` | string | yes | Text written to the sub-agent's input channel |
+| `sessionId` | string | yes | Target session — `running` for a `live` agent, `completed` for a `resume` agent |
+| `message` | string | yes | The follow-up turn's text |
 
-Only supported for transports where `supportsFollowUp` is `true` (the PTY transport, e.g.
-`opencode`). One-shot CLIs return an error explaining that no input channel exists.
+Sends a follow-up turn, continuing the session's conversation. The required status is the opposite
+for the two modes — `live` needs a running process to write to, `resume` needs the current turn
+finished — so read `followUpMode` first; see [Follow-up input](#follow-up-input). A `resume`
+follow-up puts the session back to `running` and increments `turnCount`.
 
 ### `agent_session_logs`
 
@@ -1018,10 +1046,15 @@ real adapter for structured `tool_call`/`tool_result` output. See
 **Why delegate to a CLI sub-agent instead of just doing the work in my main agent?** Context
 isolation and parallelism — see [What it's for](#what-its-for).
 
-**Does `agent_session_send` work with every agent?** No. Only agents on the interactive/PTY
-transport (`opencode` today) keep an input channel open. `claude`, `codex`, and `agy` take the
-prompt as an argv and exit at the end of the turn, so there is no second turn to send to. Check
-`supportsFollowUp` in [`agent_list_available`](#agent_list_available).
+**Does `agent_session_send` work with every agent?** All but Antigravity. `opencode` takes input
+while it runs (`followUpMode: "live"`); `claude` and `codex` continue the same conversation in a
+new turn once the current one finishes (`"resume"`), using their own resume flags. `agy` can't,
+because it never exposes a per-run conversation id. See
+[Follow-up input](#follow-up-input) — the two modes need the session in opposite states.
+
+**Can I interrupt a running sub-agent to redirect it?** Only `opencode`. For `claude` and `codex` a
+follow-up is another turn after the current one lands, not an interruption; cancel the session if
+you need it to stop now.
 
 **Which platforms are supported?** Node.js 20+ on macOS and Linux. `install --target desktop`
 writes the macOS Claude Desktop config path; on other platforms use

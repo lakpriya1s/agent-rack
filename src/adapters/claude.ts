@@ -41,13 +41,29 @@ export function claudeArgsStream(args: string[]): boolean {
   });
 }
 
+/** Flags that already pin the conversation, so this adapter must not add its own. */
+function claudeArgsPinConversation(args: string[]): boolean {
+  return args.some(
+    (arg) =>
+      arg === '--session-id' ||
+      arg.startsWith('--session-id=') ||
+      arg === '--resume' ||
+      arg.startsWith('--resume=') ||
+      arg === '-r' ||
+      arg === '--continue' ||
+      arg === '-c'
+  );
+}
+
 export class ClaudeStreamJsonAdapter implements AgentAdapter {
   readonly transportType = 'claude_stream_json';
 
   /**
-   * The prompt is a positional argv argument and the process exits when the turn ends, so
-   * there is no second turn to send follow-up input to. `--permission-mode plan` does give a
-   * genuine read-only run.
+   * The prompt is a positional argv argument and the process exits when the turn ends — but that
+   * is not the end of the *conversation*. Claude Code accepts `--session-id <uuid>` to name a
+   * session and `--resume <uuid>` to rejoin it in a later process, so follow-up input works by
+   * starting a new turn against the same session id (verified against CLI 2.1.221: turn two
+   * correctly recalled turn one's answer). `--permission-mode plan` gives a genuine read-only run.
    *
    * `supportsStreaming` is derived from the configured args rather than hardcoded, because this
    * transport only streams under `--output-format stream-json`. With the default
@@ -59,10 +75,27 @@ export class ClaudeStreamJsonAdapter implements AgentAdapter {
   readonly capabilities: AgentCapabilities;
 
   private buffer = '';
+  /**
+   * The conversation id to resume, learned from `session_id` in the CLI's own output.
+   *
+   * Deliberately parsed rather than assigned up front with `--session-id`: this transport is
+   * "speaks Claude Code's stream JSON protocol", not "is the claude binary", so a configured
+   * command may be a wrapper that rejects flags we invent — `node -e '…' --session-id <uuid>`
+   * fails outright with "bad option". Parsing leaves the first turn's argv exactly as configured,
+   * so nothing that works today can break; only a follow-up, which the caller asked for, adds
+   * a flag.
+   */
+  private conversationId?: string;
+  /** True when the caller's own args already decide the conversation — see `capabilities`. */
+  private readonly conversationPinnedByConfig: boolean;
 
   constructor(private defaultArgs: string[] = ['--output-format', 'json']) {
+    this.conversationPinnedByConfig = claudeArgsPinConversation(defaultArgs);
     this.capabilities = {
-      supportsFollowUp: false,
+      // No follow-up when the config already pins a conversation: a second `--resume` would
+      // conflict with the caller's own flag, and silently overriding it is worse than refusing.
+      supportsFollowUp: !this.conversationPinnedByConfig,
+      followUp: this.conversationPinnedByConfig ? 'none' : 'resume',
       supportsStreaming: claudeArgsStream(defaultArgs),
       supportsNativeReadOnly: true,
       promptTransport: 'argv',
@@ -71,6 +104,23 @@ export class ClaudeStreamJsonAdapter implements AgentAdapter {
 
   getCLIArgs(prompt: string, mode?: string): string[] {
     const args = [...this.defaultArgs];
+
+    if (CLAUDE_PERMISSION_MODES.has(mode ?? '')) {
+      args.push('--permission-mode', mode as string);
+    }
+
+    args.push(prompt);
+    return args;
+  }
+
+  /**
+   * Verified against CLI 2.1.221: a second process started with `--resume <session_id>` rejoins
+   * the conversation and can recall the first turn's answer.
+   */
+  getResumeArgs(prompt: string, mode?: string): string[] | null {
+    if (!this.conversationId || this.conversationPinnedByConfig) return null;
+
+    const args = [...this.defaultArgs, '--resume', this.conversationId];
 
     if (CLAUDE_PERMISSION_MODES.has(mode ?? '')) {
       args.push('--permission-mode', mode as string);
@@ -126,6 +176,12 @@ export class ClaudeStreamJsonAdapter implements AgentAdapter {
   private processJsonMessage(data: Record<string, unknown>): ParsedAgentEvent[] {
     const timestamp = Date.now();
     const events: ParsedAgentEvent[] = [];
+
+    // Every event of a real claude run carries the session id (`system`/`assistant`/`result`
+    // alike), so a follow-up has something to resume as soon as the first line arrives.
+    if (typeof data.session_id === 'string' && data.session_id) {
+      this.conversationId = data.session_id;
+    }
 
     const type = String(data.type || data.event || '');
 

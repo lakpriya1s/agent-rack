@@ -19,23 +19,41 @@ export interface FormattedResult {
 }
 
 /**
- * How a transport receives its prompt. `argv` transports are one-shot: the prompt is a
- * command-line argument, the process runs to completion, and there is no channel to say
- * anything more to it.
+ * How a transport receives its prompt. `argv` transports are one-shot *per process*: the prompt
+ * is a command-line argument and the process runs to completion — which is not the same as
+ * having no second turn (see `FollowUpMode`).
  */
 export type PromptTransport = 'argv' | 'stdin' | 'pty';
+
+/**
+ * How a transport can take another turn in the same conversation.
+ *
+ * - `none`   — no continuation of any kind.
+ * - `live`   — an input channel stays open on the running process, so a follow-up is written
+ *              straight to it (the PTY transport).
+ * - `resume` — the process exits at the end of each turn, but the CLI can rejoin the *same*
+ *              conversation in a fresh process from its own session store (`claude --resume`,
+ *              `codex exec resume`). A follow-up therefore starts a new turn rather than
+ *              writing to a live channel; continuity comes from the CLI, not from us.
+ *
+ * `resume` is why an argv prompt transport no longer implies "no follow-up". It used to: this
+ * layer assumed the two were the same thing, so `agent_session_send` refused every stdio
+ * transport even though their CLIs had documented resume flags all along.
+ */
+export type FollowUpMode = 'none' | 'live' | 'resume';
 
 /**
  * What a transport can actually do, as opposed to what the MCP tool surface advertises.
  *
  * This exists because `agent_session_send` was described as a general capability while only
- * the PTY transport could ever honour it: stdio transports are spawned with `stdin: 'ignore'`
- * and their CLIs take the prompt as argv, so there is no second turn to send input to. Tools
- * consult these flags and refuse up front rather than failing deep inside the process layer.
+ * the PTY transport could ever honour it. Tools consult these flags and refuse up front rather
+ * than failing deep inside the process layer.
  */
 export interface AgentCapabilities {
-  /** Accepts additional input after the run has started (a real second turn). */
+  /** Whether a follow-up turn is possible at all; true for both `live` and `resume`. */
   supportsFollowUp: boolean;
+  /** *How* a follow-up turn happens — callers need this to know if a new process is spawned. */
+  followUp: FollowUpMode;
   /** Emits incremental events while running, rather than only a final blob. */
   supportsStreaming: boolean;
   /** The CLI itself can enforce a read-only/sandboxed run (not just prompt-level). */
@@ -48,6 +66,15 @@ export interface AgentAdapter {
   readonly transportType: string;
   readonly capabilities: AgentCapabilities;
   getCLIArgs(prompt: string, mode?: string): string[];
+  /**
+   * Args that continue the conversation this adapter already started, for a follow-up turn in a
+   * fresh process. Returns null when there is no conversation to rejoin yet — for adapters that
+   * learn their conversation id by *parsing* the stream (codex), nothing is resumable until the
+   * first turn has produced it.
+   *
+   * Only meaningful when `capabilities.followUp === 'resume'`.
+   */
+  getResumeArgs?(prompt: string, mode?: string): string[] | null;
   parseChunk(chunk: string): ParsedAgentEvent[];
   formatResponse(events: ParsedAgentEvent[], exitCode?: number): FormattedResult;
   /**

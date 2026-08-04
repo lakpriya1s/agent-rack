@@ -11,29 +11,52 @@ export class CodexExecJsonAdapter implements AgentAdapter {
   readonly transportType = 'codex_exec_json';
 
   /**
-   * `codex exec` is one-shot with the prompt as argv. Its `--sandbox` flag is a real
-   * OS-level sandbox, making it the only transport that can guarantee a read-only run.
+   * `codex exec` is one-shot with the prompt as argv, but `codex exec resume <SESSION_ID>`
+   * rejoins the same conversation in a fresh process, so follow-up input works as a new turn.
+   * Its `--sandbox` flag is a real OS-level sandbox, making it the only transport that can
+   * guarantee a read-only run.
    */
   readonly capabilities: AgentCapabilities = {
-    supportsFollowUp: false,
+    supportsFollowUp: true,
+    followUp: 'resume',
     supportsStreaming: true,
     supportsNativeReadOnly: true,
     promptTransport: 'argv',
   };
 
   private buffer = '';
+  /**
+   * Codex assigns the conversation id itself and announces it in a `thread.started` event, so —
+   * unlike claude, where we can pick the id up front — nothing is resumable until the first turn
+   * has emitted it. `getResumeArgs` returns null until then rather than guessing.
+   *
+   * Deliberately not `codex exec resume --last`: "the most recent recorded session" is global to
+   * the machine, so with two concurrent sessions a follow-up could land in the wrong conversation.
+   */
+  private threadId?: string;
 
   constructor(private defaultArgs: string[] = ['exec', '--json', '--skip-git-repo-check']) {}
 
+  private sandboxArgs(mode?: string): string[] {
+    return mode === 'read-only' || mode === 'workspace-write' || mode === 'danger-full-access'
+      ? ['--sandbox', mode]
+      : [];
+  }
+
   getCLIArgs(prompt: string, mode?: string): string[] {
-    const args = [...this.defaultArgs];
+    return [...this.defaultArgs, ...this.sandboxArgs(mode), prompt];
+  }
 
-    if (mode === 'read-only' || mode === 'workspace-write' || mode === 'danger-full-access') {
-      args.push('--sandbox', mode);
-    }
+  /**
+   * Shape per `codex exec resume --help`: `codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]`.
+   * The `resume` subcommand is spliced in after `exec` so the configured flags (`--json`,
+   * `--skip-git-repo-check`, …) are preserved as options of the resumed run.
+   */
+  getResumeArgs(prompt: string, mode?: string): string[] | null {
+    if (!this.threadId) return null;
 
-    args.push(prompt);
-    return args;
+    const [exec, ...flags] = this.defaultArgs;
+    return [exec, 'resume', ...flags, ...this.sandboxArgs(mode), this.threadId, prompt];
   }
 
   parseChunk(chunk: string): ParsedAgentEvent[] {
@@ -136,7 +159,12 @@ export class CodexExecJsonAdapter implements AgentAdapter {
       return [{ type: 'error', content: String(message), metadata: data, timestamp }];
     }
 
-    // thread.started / turn.started / turn.completed carry no user-facing content.
+    // thread.started / turn.started / turn.completed carry no user-facing content — but
+    // thread.started carries the id a follow-up turn has to resume.
+    if (type === 'thread.started' && typeof data.thread_id === 'string') {
+      this.threadId = data.thread_id;
+    }
+
     return [];
   }
 

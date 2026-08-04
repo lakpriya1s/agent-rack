@@ -310,8 +310,66 @@ describe('cancellation and concurrency', () => {
   });
 });
 
+/**
+ * A `claude_stream_json` agent that reports a fixed session_id and echoes its own argv, so a
+ * resumed turn can be observed end-to-end: the follow-up's output shows the `--resume` flag the
+ * controller actually passed to the child.
+ */
+function resumableAgent(dir: string): AgentConfig {
+  const script = path.join(dir, 'resumable.cjs');
+  fs.writeFileSync(
+    script,
+    "console.log(JSON.stringify({ type: 'assistant', session_id: 'sid-1', " +
+      "text: 'argv: ' + process.argv.slice(2).join(' ') }));\n"
+  );
+  return {
+    name: 'Resumable',
+    command: 'node',
+    args: [script],
+    transport: 'claude_stream_json',
+    env: {},
+  };
+}
+
+/** A transport with no continuation of any kind — Antigravity exposes no per-run conversation id. */
+function noFollowUpAgent(dir: string): AgentConfig {
+  const script = path.join(dir, 'agy.cjs');
+  fs.writeFileSync(script, 'setInterval(() => {}, 1000);\n');
+  return {
+    name: 'No Follow Up',
+    command: 'node',
+    args: [script],
+    transport: 'agy_stream',
+    env: {},
+  };
+}
+
 describe('follow-up input capability gate', () => {
-  it('refuses agent_session_send for one-shot argv transports with an explanatory error', async () => {
+  it('refuses agent_session_send for transports with no way to rejoin a conversation', async () => {
+    const dir = tempDir();
+    try {
+      const config = configFor(dir);
+      config.agents['no_follow_up'] = noFollowUpAgent(dir);
+      const manager = new SessionManager(config);
+
+      const session = manager.createSession('no_follow_up', 'wait', dir);
+
+      // Previously this produced 'Process is not running or stdin is unavailable', which
+      // read like a transient failure rather than a permanent property of the transport.
+      expect(() => manager.sendToSession(session.id, 'more')).toThrow(
+        /does not support follow-up input/
+      );
+      expect(session.getInfo().supportsFollowUp).toBe(false);
+      expect(session.getInfo().followUpMode).toBe('none');
+
+      manager.cancelSession(session.id);
+      await manager.shutdown();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a resume follow-up while the current turn is still running', async () => {
     const dir = tempDir();
     try {
       const config = configFor(dir);
@@ -320,14 +378,69 @@ describe('follow-up input capability gate', () => {
 
       const session = manager.createSession('hanging', 'wait', dir);
 
-      // Previously this produced 'Process is not running or stdin is unavailable', which
-      // read like a transient failure rather than a permanent property of the transport.
-      expect(() => manager.sendToSession(session.id, 'more')).toThrow(
-        /does not support follow-up input/
-      );
-      expect(session.getInfo().supportsFollowUp).toBe(false);
+      // A resume follow-up is a *new process*, so starting one mid-turn would run two children
+      // against one conversation. This is a "not yet", not a "never" — hence the distinct error.
+      expect(() => manager.sendToSession(session.id, 'more')).toThrow(/has to finish first/);
+      expect(session.getInfo().supportsFollowUp).toBe(true);
+      expect(session.getInfo().followUpMode).toBe('resume');
 
       manager.cancelSession(session.id);
+      await manager.shutdown();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('answers a follow-up by resuming the conversation in a new turn', async () => {
+    const dir = tempDir();
+    try {
+      const config = configFor(dir);
+      config.agents['resumable'] = resumableAgent(dir);
+      const manager = new SessionManager(config);
+
+      const session = manager.createSession('resumable', 'first', dir);
+      await waitForSessionCompletion(manager, session.id);
+      expect(session.getInfo().turnCount).toBe(1);
+      expect(session.result?.rawText).toContain('argv: first');
+
+      manager.sendToSession(session.id, 'second');
+
+      // Back to running, and no stale finishedAt — retention pruning measures age from it, so
+      // leaving the old one would make a session that is running again eligible for deletion.
+      expect(session.status).toBe('running');
+      expect(session.finishedAt).toBeUndefined();
+
+      await waitForSessionCompletion(manager, session.id);
+      expect(session.status).toBe('completed');
+      expect(session.getInfo().turnCount).toBe(2);
+
+      // The resume flag reached the child, carrying the id the first turn reported.
+      expect(session.result?.rawText).toContain('--resume sid-1');
+      expect(session.result?.rawText).toContain('second');
+      // Each turn's result covers only that turn: the buffer spans the whole session, so
+      // without windowing every follow-up would re-report the entire conversation.
+      expect(session.result?.rawText).not.toContain('argv: first');
+
+      await manager.shutdown();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to resume a cancelled session, whose conversation was interrupted mid-turn', async () => {
+    const dir = tempDir();
+    try {
+      const config = configFor(dir);
+      config.agents['hanging'] = hangingAgent(dir);
+      const manager = new SessionManager(config);
+
+      const session = manager.createSession('hanging', 'wait', dir);
+      manager.cancelSession(session.id);
+      await waitForSessionCompletion(manager, session.id);
+      expect(session.status).toBe('cancelled');
+
+      expect(() => manager.sendToSession(session.id, 'more')).toThrow(/not safe to resume/);
+
       await manager.shutdown();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

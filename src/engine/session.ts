@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AgentConfig, AgentMCPConfig } from '../config/schema.js';
-import { createAdapter, FormattedResult } from '../adapters/index.js';
+import { createAdapter, FollowUpMode, FormattedResult } from '../adapters/index.js';
 import { AgentProcessController, ProcessRunOptions } from './process.js';
 import { validateWorkspacePath } from '../security/workspace.js';
 import { reviewFromResult, ReviewOutput } from './review.js';
@@ -47,6 +47,14 @@ export interface AgentSessionInfo {
   kind: SessionKind;
   /** Whether this transport can accept agent_session_send follow-up input. */
   supportsFollowUp: boolean;
+  /**
+   * How a follow-up is delivered. `live` writes to the running process; `resume` starts a new
+   * turn in a new process (so it is accepted only once the current turn has finished, and moves
+   * the session from a terminal status back to 'running').
+   */
+  followUpMode: FollowUpMode;
+  /** How many turns this session has run, including follow-ups. */
+  turnCount: number;
 }
 
 export class AgentSession {
@@ -58,6 +66,13 @@ export class AgentSession {
   public result?: FormattedResult;
   public error?: string;
   public reviewResult?: ReviewOutput;
+  /**
+   * The run options of this session's first turn, minus the prompt. A `resume` follow-up has to
+   * spawn in the same workspace under the same mode and timeout, and re-deriving them from the
+   * config would silently drop per-call overrides (a narrowed `mode`, a longer timeout).
+   */
+  public baseRunOptions?: Omit<ProcessRunOptions, 'prompt' | 'continueConversation'>;
+  public turnCount = 0;
 
   constructor(
     public readonly agentId: string,
@@ -76,6 +91,19 @@ export class AgentSession {
   settle(status: SessionStatus): void {
     this.status = status;
     this.finishedAt ??= new Date().toISOString();
+  }
+
+  /**
+   * Reopens a settled session for a follow-up turn.
+   *
+   * `finishedAt` is cleared, not just overwritten later: it is what retention pruning measures
+   * age from, so leaving a stale one on a session that is running again would make it eligible
+   * for deletion mid-turn.
+   */
+  reopenForNextTurn(): void {
+    this.status = 'running';
+    this.finishedAt = undefined;
+    this.error = undefined;
   }
 
   isTerminal(): boolean {
@@ -99,6 +127,8 @@ export class AgentSession {
       review: this.reviewResult,
       kind: this.kind,
       supportsFollowUp: this.controller.adapter.capabilities.supportsFollowUp,
+      followUpMode: this.controller.adapter.capabilities.followUp,
+      turnCount: this.turnCount,
     };
   }
 }
@@ -200,13 +230,32 @@ export class SessionManager {
     this.sessions.set(session.id, session);
 
     // Run session asynchronously in background
-    const runOptions: ProcessRunOptions = {
-      prompt,
+    session.baseRunOptions = {
       workspace: canonicalPath,
       mode,
       timeoutSeconds: options?.timeoutSeconds ?? this.config.security.defaultTimeoutSeconds,
       sanitizeEnv: this.config.security.sanitizeEnv,
     };
+
+    this.trackRun(session, prompt, false);
+
+    return session;
+  }
+
+  /**
+   * Spawns one turn and tracks its promise, settling the session when it lands.
+   *
+   * Shared by the first turn and every `resume` follow-up so both settle identically — a
+   * follow-up that skipped this would leave the session 'running' forever, or drop the review
+   * parsing and cancellation handling that only lived on the create path.
+   */
+  private trackRun(session: AgentSession, prompt: string, continueConversation: boolean): void {
+    const runOptions: ProcessRunOptions = {
+      ...session.baseRunOptions!,
+      prompt,
+      continueConversation,
+    };
+    session.turnCount++;
 
     const runPromise = session.controller
       .runSync(runOptions)
@@ -227,8 +276,6 @@ export class SessionManager {
         this.runPromises.delete(session.id);
       });
     this.runPromises.set(session.id, runPromise);
-
-    return session;
   }
 
   getSession(sessionId: string): AgentSession | undefined {
@@ -294,6 +341,14 @@ export class SessionManager {
     return this.shutdownPromise;
   }
 
+  /**
+   * Delivers a follow-up turn, by whichever means the transport actually supports.
+   *
+   * The two modes have opposite status preconditions, which is the whole reason this branches:
+   * a `live` transport needs the process still running to write to, while a `resume` transport
+   * needs the current turn *finished* — its follow-up is a new process, and starting one while
+   * the previous is mid-turn would run two children against one conversation.
+   */
   sendToSession(sessionId: string, message: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -302,21 +357,54 @@ export class SessionManager {
 
     // Refuse on capability before status: "this transport can never do this" is a different
     // and more useful message than "the session isn't running".
-    if (!session.controller.adapter.capabilities.supportsFollowUp) {
+    const { followUp } = session.controller.adapter.capabilities;
+    if (followUp === 'none') {
       throw new Error(
         `Agent '${session.agentId}' (transport '${session.agentConfig.transport}') does not ` +
-          `support follow-up input. Its CLI takes the prompt as a command-line argument and ` +
-          `exits when the turn ends, so there is no channel to send to. Create a new session ` +
-          `with the follow-up as its prompt instead.`
+          `support follow-up input: it takes the prompt as a command-line argument, exits when ` +
+          `the turn ends, and exposes no way to rejoin that specific conversation afterwards. ` +
+          `Create a new session with the follow-up as its prompt instead.`
       );
     }
 
-    if (session.status !== 'running') {
+    if (followUp === 'live') {
+      if (session.status !== 'running') {
+        throw new Error(
+          `Cannot send input to session '${sessionId}' because its status is '${session.status}'.`
+        );
+      }
+      session.controller.sendInput(message);
+      return;
+    }
+
+    // followUp === 'resume': a new turn in a new process, rejoining the CLI's own conversation.
+    if (session.status === 'running' || session.status === 'cancelling') {
       throw new Error(
-        `Cannot send input to session '${sessionId}' because its status is '${session.status}'.`
+        `Session '${sessionId}' is still ${session.status}. Agent '${session.agentId}' answers a ` +
+          `follow-up by resuming its conversation in a new process, so the current turn has to ` +
+          `finish first — poll agent_session_status until it is no longer running.`
       );
     }
 
-    session.controller.sendInput(message);
+    if (session.status === 'cancelled') {
+      throw new Error(
+        `Session '${sessionId}' was cancelled, so its conversation was interrupted mid-turn and ` +
+          `is not safe to resume. Create a new session instead.`
+      );
+    }
+
+    if (!this.acceptingSessions) {
+      throw new Error('Session manager is shutting down and cannot start new turns.');
+    }
+
+    // A follow-up spawns a real child, so it must respect the same cap as a fresh session.
+    const activeCount = this.activeProcessCount();
+    const maxAllowed = this.config.security.maxConcurrentSessions;
+    if (activeCount >= maxAllowed) {
+      throw new Error(`Maximum concurrent sessions limit (${maxAllowed}) reached.`);
+    }
+
+    session.reopenForNextTurn();
+    this.trackRun(session, message, true);
   }
 }

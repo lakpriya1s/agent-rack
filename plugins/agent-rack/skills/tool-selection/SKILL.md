@@ -28,12 +28,19 @@ Use when:
 - the user wants to keep working while it runs, or
 - the task should be cancelable (`agent_session_cancel`) if it goes off track.
 
-**Do not promise follow-up input.** `agent_session_send` only works for agents whose transport
-keeps an input channel open — the interactive/PTY ones (`opencode`). `claude`, `codex`, and `agy`
-take their prompt as a command-line argument and exit when the turn ends, so they cannot receive
-a second message; calling it returns an error. Check `supportsFollowUp` on the session info or in
-`agent_list_available` before telling the user they can steer a session mid-flight. When it's
-`false`, the equivalent is starting a new session with the follow-up as its prompt.
+**Follow-up input works, but not the same way for every agent.** Read `followUpMode` on the
+session info (or in `agent_list_available`) before promising anything:
+
+- `live` (`opencode`) — write to the running process; the session must still be **running**.
+- `resume` (`claude`, `codex`) — the agent is restarted with its own resume flag to continue the
+  same conversation, so the current turn must have **finished**. A `completed` session is still
+  continuable; that is the precondition, not a dead end.
+- `none` (`agy`) — no continuation; the equivalent is a new session with the follow-up as its
+  prompt.
+
+The practical consequence: only `opencode` can be steered *mid-flight*. For `claude` and `codex`,
+follow-up means "another turn once this one lands", so don't tell the user they can interrupt a
+running turn.
 
 Once started, tell the user it's running and give them the `sessionId` — a background session
 has no persistent UI signal of its own (no status-line badge, no expandable details panel) the

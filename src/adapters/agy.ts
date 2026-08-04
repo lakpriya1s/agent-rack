@@ -12,9 +12,17 @@ export class AgyStreamAdapter implements AgentAdapter {
   /**
    * `agy --print` is one-shot with the prompt as argv, and exposes no sandbox or permission
    * flag — so a read-only run here is prompt-level best effort, never a guarantee.
+   *
+   * No follow-up, unlike the other argv transports. Antigravity does have `--conversation <ID>`
+   * (and `--continue`), but its `--print` output is unstructured text that never reveals the
+   * conversation id, so there is nothing to resume *by id* — and `--continue` resumes "the most
+   * recent conversation" globally, which would send a follow-up into the wrong conversation as
+   * soon as two sessions run at once. Enabling this needs a way to learn the id for a specific
+   * run; until then reporting `true` here would be a promise the transport cannot keep.
    */
   readonly capabilities: AgentCapabilities = {
     supportsFollowUp: false,
+    followUp: 'none',
     supportsStreaming: true,
     supportsNativeReadOnly: false,
     promptTransport: 'argv',

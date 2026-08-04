@@ -12,6 +12,11 @@ export interface ProcessRunOptions {
   mode?: string;
   timeoutSeconds?: number;
   sanitizeEnv?: boolean;
+  /**
+   * Continue the conversation this controller already started, instead of opening a new one —
+   * a follow-up turn on a `followUp: 'resume'` transport. The adapter supplies the resume args.
+   */
+  continueConversation?: boolean;
 }
 
 export interface AgentProcessControllerOptions {
@@ -88,14 +93,42 @@ export class AgentProcessController {
    * Drains the adapter's line buffer, then formats. A CLI that exits without a trailing
    * newline leaves its final line held back in the adapter — for `claude --output-format json`
    * that final line is the entire response, so skipping this loses the whole result.
+   *
+   * Formats only the events from `turnStartCursor` onward. The buffer spans the whole session,
+   * which on a resumed conversation includes every earlier turn — folding those back in would
+   * make each follow-up's result a growing concatenation of the entire conversation.
    */
-  private finalizeResult(exitCode: number): FormattedResult {
+  private finalizeResult(exitCode: number, turnStartCursor: number): FormattedResult {
     this.buffer.pushMany(this.adapter.flush());
-    return this.adapter.formatResponse(this.buffer.getAll(), exitCode);
+    const events =
+      turnStartCursor > 0 ? this.buffer.getSince(turnStartCursor).events : this.buffer.getAll();
+    return this.adapter.formatResponse(events, exitCode);
+  }
+
+  /**
+   * Args for this turn: a continuation rejoins the conversation the adapter already opened,
+   * anything else starts a new one.
+   */
+  private resolveCliArgs(options: ProcessRunOptions): string[] {
+    if (!options.continueConversation) {
+      return this.adapter.getCLIArgs(options.prompt, options.mode);
+    }
+
+    const resumeArgs = this.adapter.getResumeArgs?.(options.prompt, options.mode);
+    if (!resumeArgs) {
+      throw new Error(
+        `Transport '${this.agentConfig.transport}' has no conversation to resume yet. Its CLI ` +
+          `reports the conversation id in its own output, so a follow-up is only possible after ` +
+          `the first turn has produced one.`
+      );
+    }
+    return resumeArgs;
   }
 
   async runSync(options: ProcessRunOptions): Promise<FormattedResult> {
-    const cliArgs = this.adapter.getCLIArgs(options.prompt, options.mode);
+    const cliArgs = this.resolveCliArgs(options);
+    // Captured before spawning so a follow-up turn's result covers only that turn.
+    const turnStartCursor = this.buffer.totalEvents();
     const env = sanitizeEnvironment({
       customEnv: this.agentConfig.env,
       sanitize: options.sanitizeEnv !== false,
@@ -136,7 +169,7 @@ export class AgentProcessController {
             if (this.killTimer) clearTimeout(this.killTimer);
             this.ptyProcess = undefined;
             this.processLive = false;
-            const result = this.finalizeResult(exitCode);
+            const result = this.finalizeResult(exitCode, turnStartCursor);
             if (timeoutError) reject(timeoutError);
             else resolve(result);
           });
@@ -152,9 +185,10 @@ export class AgentProcessController {
             cwd: options.workspace,
             env,
             reject: false,
-            // These transports take the prompt as argv and have no second turn, so an open
-            // stdin would only risk the CLI blocking on a read that never completes.
-            // `agent_session_send` refuses them up front via adapter capabilities.
+            // These transports take the prompt as argv, so an open stdin would only risk the CLI
+            // blocking on a read that never completes. A follow-up turn on them is a *new*
+            // process started with the CLI's own resume flag (`followUp: 'resume'`), never a
+            // write to this one — so there is still nothing for stdin to carry.
             stdin: 'ignore',
             // A detached POSIX child is its own process-group leader, allowing cancellation
             // to signal every descendant rather than only the agent CLI wrapper.
@@ -190,7 +224,7 @@ export class AgentProcessController {
               this.execaSubprocess = undefined;
               this.processLive = false;
               const exitCode = result.exitCode ?? 0;
-              const formattedResult = this.finalizeResult(exitCode);
+              const formattedResult = this.finalizeResult(exitCode, turnStartCursor);
               if (timeoutError) reject(timeoutError);
               else resolve(formattedResult);
             })

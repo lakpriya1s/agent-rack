@@ -723,9 +723,14 @@ export function runCLI() {
         console.log(`   Args: ${agentConfig.args.join(' ')}`);
 
         const capabilities = capabilitiesForAgent(agentConfig);
-        console.log(
-          `   Follow-up input: ${capabilities.supportsFollowUp ? 'yes' : 'no (one-shot; agent_session_send will refuse)'}`
-        );
+        // Spelled out per mode: "yes" alone hid that a resume follow-up needs the *opposite*
+        // session status from a live one, which is the part callers get wrong.
+        const followUpText = {
+          live: 'yes — live (write to the running process)',
+          resume: 'yes — resume (new turn, after the current one finishes)',
+          none: 'no (agent_session_send will refuse; start a new session instead)',
+        }[capabilities.followUp];
+        console.log(`   Follow-up input: ${followUpText}`);
         const warning = describeUnenforcedPolicy(agent.transport, policy);
         if (warning) console.log(`   ! ${warning}`);
         console.log('');

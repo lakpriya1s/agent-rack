@@ -5,6 +5,40 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.11.0
+
+### Added
+
+- **`agent_session_send` now works for `claude` and `codex`, not just `opencode`.** The old
+  refusal rested on a false premise — that an argv prompt transport means there is no second turn.
+  Both CLIs can rejoin a *specific* conversation in a fresh process (`claude --resume <session_id>`,
+  `codex exec resume <thread_id>`), so a follow-up is delivered as a new turn on the same
+  conversation. Verified end to end against Claude Code 2.1.221: turn two recalls turn one's
+  answer, driven through `SessionManager` exactly as an MCP client would.
+- **`capabilities.followUp`** (`'live' | 'resume' | 'none'`) says *how* a follow-up is delivered;
+  `supportsFollowUp` is now simply `followUp !== 'none'`. `AgentSessionInfo` gained `followUpMode`
+  and `turnCount`. `agent-rack agents` spells the mode out rather than printing a bare yes/no.
+  - `live` (`pty_interactive`/`opencode`) — written to the running process; the only mode that can
+    steer a turn mid-flight. Requires status `running`.
+  - `resume` (`claude`, `codex`) — restarts the agent with its own resume flag. Requires the
+    current turn to have **finished**; the session then returns to `running` and `turnCount`
+    increments. Refused for a `cancelled` session, whose conversation was interrupted mid-turn.
+  - `none` (`agy`) — Antigravity's `--print` output never reveals a per-run conversation id, and
+    `--continue` resumes the most recent conversation machine-wide, which would misroute a
+    follow-up as soon as two sessions run at once. Enabling it needs a way to learn the id for a
+    specific run.
+
+### Changed
+
+- **The conversation id is parsed from each CLI's own output** (`session_id` for claude,
+  `thread.started` for codex) rather than assigned up front. A transport name describes a protocol,
+  not a binary, so a configured command may be a wrapper that rejects flags we invent — passing
+  `--session-id <uuid>` to one such wrapper fails outright with "bad option". The first turn's argv
+  is therefore left exactly as configured; only a follow-up adds a flag.
+- **Each turn's result covers only that turn.** `finalizeResult` formats from the turn's start
+  cursor instead of the whole ring buffer, which on a resumed conversation would have made every
+  follow-up's result a growing concatenation of all previous turns.
+
 ## 0.10.5
 
 ### Fixed

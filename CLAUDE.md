@@ -97,10 +97,28 @@ output, with nothing appended). `agent_review`'s JSON extraction always parses `
 `summary` — the appended block would corrupt JSON parsing.
 
 Each adapter also declares `capabilities` (`AgentCapabilities`) and implements `flush()`:
-- `capabilities.supportsFollowUp` is true **only** for `pty_interactive`. The other transports
-  take the prompt as argv and exit when the turn ends, so there is no second turn — this is what
-  `agent_session_send` checks before doing anything. Do not "fix" this by switching `stdin` to
-  `pipe`; the absence of a second turn is a property of those CLIs, not of the spawn options.
+- `capabilities.followUp` is `'live' | 'resume' | 'none'`, and `supportsFollowUp` is just
+  `followUp !== 'none'`. Only `pty_interactive` is `live` — the one transport with an open input
+  channel. Do not "fix" the others by switching `stdin` to `'pipe'`: they take the prompt as argv,
+  so nothing would read it.
+  `claude_stream_json` and `codex_exec_json` are `resume`: their CLIs can rejoin a *specific*
+  conversation in a fresh process (`claude --resume <session_id>`, `codex exec resume <thread_id>`),
+  so a follow-up is a new turn, not a write. Both learn the id by **parsing it out of their own
+  event stream** (`session_id` / `thread.started`) rather than assigning one up front — a
+  transport name describes a protocol, not a binary, so a configured command may be a wrapper that
+  rejects flags we invent (`node -e '…' --session-id <uuid>` fails with "bad option"). Never add a
+  flag to the *first* turn's argv for this; only the follow-up may add one.
+  `agy_stream` is `none`: its output never reveals a per-run conversation id, and `--continue`
+  resumes the most recent conversation machine-wide, which misroutes follow-ups under concurrency.
+- The two follow-up modes have **opposite status preconditions**, which `sendToSession` enforces:
+  `live` requires the session still `running`; `resume` requires the current turn *finished*
+  (a resume spawns a second child, and two must not run against one conversation). A `resume`
+  follow-up calls `reopenForNextTurn()` — which clears `finishedAt`, since retention pruning
+  measures age from it and a stale one could delete a session mid-turn — and counts against
+  `maxConcurrentSessions` like any other spawn.
+- `AgentProcessController.finalizeResult` formats only the events from that turn's start cursor.
+  The ring buffer spans the whole session, so on a resumed conversation formatting `getAll()`
+  would make each follow-up's result a growing concatenation of every previous turn.
 - `flush()` drains the adapter's held-back line buffer at exit. A CLI that exits without a
   trailing newline would otherwise lose its final line — which for `claude --output-format json`
   is the entire response. `AgentProcessController.finalizeResult` must call it before formatting.
@@ -263,8 +281,11 @@ but must match each other.
   case; "we passed a flag" is not "the OS enforces it".
 - `eventCount` in `AgentSessionInfo` is the monotonic total, never the retained buffer length.
   Anything used for change detection must not plateau.
-- `agent_session_send` must check `adapter.capabilities.supportsFollowUp` before touching the
-  process. Only `pty_interactive` supports it.
+- `agent_session_send` must branch on `adapter.capabilities.followUp` before touching anything —
+  refusing `none` on capability (a permanent property) before status (a transient one), writing to
+  the process only for `live`, and spawning a resumed turn only for `resume`. Never report a
+  follow-up mode a CLI cannot actually honour: `resume` requires a way to rejoin *that specific*
+  conversation, not merely a `--continue`-style flag.
 - Only `agent_review` may create a session with `kind: 'review'`.
 - One `AgentMCPServerContext` (and therefore one `SessionManager`) per process, shared by every
   connection. Anything that constructs its own `SessionManager` for a live server breaks

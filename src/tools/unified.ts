@@ -241,11 +241,14 @@ export function registerUnifiedTools(
   tools.push({
     name: 'agent_session_send',
     description:
-      'Sends follow-up text to a running background sub-agent session. Only works for agents ' +
-      'whose transport keeps an input channel open (interactive/PTY agents such as opencode). ' +
-      'One-shot CLIs (claude, codex, agy) take their prompt as an argument and exit when the ' +
-      'turn ends, so they cannot receive follow-up input — check supportsFollowUp in ' +
-      'agent_list_available or the session info before calling this.',
+      'Sends a follow-up turn to a background sub-agent session, continuing the same ' +
+      'conversation. How it is delivered depends on the agent, and so does *when* you may call ' +
+      'it — see followUpMode on the session info: "live" (opencode) writes to the still-running ' +
+      'process, so the session must be running; "resume" (claude, codex) restarts the agent with ' +
+      'its own resume flag, so the current turn must have FINISHED first — poll ' +
+      'agent_session_status until it is no longer running, then send. A resumed session goes ' +
+      'back to status "running" and its turnCount increases. Agents with followUpMode "none" ' +
+      '(agy) cannot continue a conversation at all; start a new session instead.',
     inputSchema: {
       type: 'object',
       properties: {

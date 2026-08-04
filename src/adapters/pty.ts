@@ -18,6 +18,9 @@ export class PtyTerminalAdapter implements AgentAdapter {
    */
   readonly capabilities: AgentCapabilities = {
     supportsFollowUp: true,
+    // The only transport with a genuinely open input channel: a follow-up is written to the
+    // living process, not answered by a new one.
+    followUp: 'live',
     supportsStreaming: true,
     supportsNativeReadOnly: false,
     promptTransport: 'pty',

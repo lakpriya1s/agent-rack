@@ -112,6 +112,41 @@ describe('CodexExecJsonAdapter', () => {
     expect(events[0].type).toBe('error');
     expect(result.summary).toContain('model not supported');
   });
+
+  it('resumes the thread id from thread.started, splicing `resume` in after `exec`', () => {
+    const adapter = new CodexExecJsonAdapter();
+    expect(adapter.capabilities.followUp).toBe('resume');
+    // thread.started is the only place the id appears, so nothing is resumable before it.
+    expect(adapter.getResumeArgs('follow up')).toBeNull();
+
+    adapter.parseChunk(JSON.stringify({ type: 'thread.started', thread_id: 'th-42' }) + '\n');
+
+    // `codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]` — configured flags stay as options of
+    // the resumed run rather than trailing the prompt.
+    expect(adapter.getResumeArgs('follow up')).toEqual([
+      'exec',
+      'resume',
+      '--json',
+      '--skip-git-repo-check',
+      'th-42',
+      'follow up',
+    ]);
+  });
+
+  it('keeps the sandbox flag on a resumed turn', () => {
+    const adapter = new CodexExecJsonAdapter(['exec', '--json']);
+    adapter.parseChunk(JSON.stringify({ type: 'thread.started', thread_id: 'th-7' }) + '\n');
+
+    expect(adapter.getResumeArgs('again', 'read-only')).toEqual([
+      'exec',
+      'resume',
+      '--json',
+      '--sandbox',
+      'read-only',
+      'th-7',
+      'again',
+    ]);
+  });
 });
 
 describe('Adapter Factory', () => {
@@ -160,9 +195,67 @@ describe('claude streaming capability', () => {
   it('keeps the other capabilities fixed regardless of output format', () => {
     for (const args of [['--output-format', 'json'], ['--output-format', 'stream-json']]) {
       const caps = new ClaudeStreamJsonAdapter(args).capabilities;
-      expect(caps.supportsFollowUp).toBe(false);
+      expect(caps.supportsFollowUp).toBe(true);
+      expect(caps.followUp).toBe('resume');
       expect(caps.supportsNativeReadOnly).toBe(true);
       expect(caps.promptTransport).toBe('argv');
+    }
+  });
+});
+
+describe('ClaudeStreamJsonAdapter conversation resume', () => {
+  it('has nothing to resume until the stream reveals a session_id', () => {
+    const adapter = new ClaudeStreamJsonAdapter();
+    expect(adapter.getResumeArgs('follow up')).toBeNull();
+  });
+
+  it('resumes the session_id the CLI reported, leaving the first turn args untouched', () => {
+    const adapter = new ClaudeStreamJsonAdapter(['--output-format', 'json']);
+
+    // The first turn must add no flags of its own: this transport may be driven by a wrapper
+    // command that rejects invented options (`node -e '…' --session-id <uuid>` → "bad option").
+    expect(adapter.getCLIArgs('do the thing')).toEqual([
+      '--output-format',
+      'json',
+      'do the thing',
+    ]);
+
+    adapter.parseChunk(
+      JSON.stringify({ type: 'assistant', session_id: 'abc-123', content: [] }) + '\n'
+    );
+
+    expect(adapter.getResumeArgs('and now this')).toEqual([
+      '--output-format',
+      'json',
+      '--resume',
+      'abc-123',
+      'and now this',
+    ]);
+  });
+
+  it('forwards a permission mode on the resumed turn too', () => {
+    const adapter = new ClaudeStreamJsonAdapter([]);
+    adapter.parseChunk(JSON.stringify({ type: 'result', session_id: 'sid-9' }) + '\n');
+
+    expect(adapter.getResumeArgs('again', 'plan')).toEqual([
+      '--resume',
+      'sid-9',
+      '--permission-mode',
+      'plan',
+      'again',
+    ]);
+  });
+
+  it('refuses to resume when the configured args already pin a conversation', () => {
+    for (const pinned of [['--continue'], ['-c'], ['--resume', 'other'], ['--session-id', 'x']]) {
+      const adapter = new ClaudeStreamJsonAdapter(pinned);
+      expect(adapter.capabilities.followUp).toBe('none');
+      expect(adapter.capabilities.supportsFollowUp).toBe(false);
+
+      adapter.parseChunk(JSON.stringify({ type: 'result', session_id: 'sid-1' }) + '\n');
+      // Adding our own --resume alongside the caller's own flag would conflict; refusing is the
+      // honest outcome, not silently overriding what they asked for.
+      expect(adapter.getResumeArgs('follow up')).toBeNull();
     }
   });
 });
