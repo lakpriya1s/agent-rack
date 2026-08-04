@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # PostToolUse hook: when an agent-rack MCP tool call spawns a background sub-agent session
 # (agent_session_create, a *_run shortcut, or agent_review — the latter two only when called
-# with background:true), inject a reminder to start a Monitor watching its status/tail — so a
-# human sees live progress without depending on the model remembering to do it on its own.
+# with background:true), inject a reminder to start a plain background shell that waits for the
+# session to finish — so the result is collected without depending on the model remembering to
+# poll, and without a streaming Monitor pushing every status change back into the context window.
 #
 # Stays silent (exit 0, no output) for anything that isn't a fresh, still-running session: a
 # synchronous agent_run call, an unrelated tool, or malformed input all fall through harmlessly.
@@ -30,28 +31,30 @@ fi
 # and the whole hook dies with a syntax error. `read` returns non-zero at EOF, hence `|| true`.
 read -r -d '' template <<'TEMPLATE' || true
 A background agent-rack session was just created via __TOOL__ (sessionId=__SID__,
-status=running). You MUST start a Monitor on it now, before anything else, so the user sees live
-progress in this chat.
+status=running). Start a plain background shell watching it now, before anything else, so the
+session is tracked without you having to remember to poll it.
 
-Emit BOTH the status line and the session's recent output on every change. Status alone is just a
-rising event count, which tells the user nothing about what the sub-agent is actually doing:
+Use an ordinary background shell (Bash with run_in_background), NOT a streaming Monitor. A Monitor
+turns every status change into a conversation message, so a long session floods the context window
+with a rising event count that says nothing about what the sub-agent is doing — and a chatty
+monitor can get rate-limited and dropped, losing the watch entirely. A background shell stays
+silent and notifies you exactly once, when the session reaches a terminal state:
 
-prev=""
-while :; do
-  # Truncated: the status line embeds the session summary, which on completion is the agent's
-  # entire reply. The diffable fields (status, event count) are at the front.
-  cur=$(agent-rack session status __SID__ 2>&1)
-  cur=${cur:0:200}
-  if [ "$cur" != "$prev" ]; then
-    echo "$cur"
-    agent-rack session tail --count 3 __SID__ 2>&1
-    prev="$cur"
-  fi
-  case "$cur" in *status=completed*|*status=failed*|*status=cancelled*|*rror*) break ;; esac
-  sleep 2
+ID=__SID__
+LOG="${TMPDIR:-/tmp}/agent-rack-$ID.log"
+until agent-rack session status "$ID" 2>&1 | grep -qE 'status=(completed|failed|cancelled)'; do
+  sleep 15
 done
+agent-rack session status "$ID" > "$LOG" 2>&1
+agent-rack session tail --count 200 "$ID" >> "$LOG" 2>&1
+echo "session $ID reached a terminal state; full output in $LOG"
 
-Poll every ~2s and stop once status is completed/failed/cancelled (the loop above already does).
+When the completion notification arrives, Read that log to get the result: the status line embeds
+the session summary, which on completion is the sub-agent's entire reply.
+
+Then tell the user they can follow along live themselves, at no context cost, with:
+  watch -n5 'agent-rack session status __SID__ | cut -c1-160; agent-rack session tail --count 5 __SID__'
+
 If `agent-rack` is not on PATH, use `npx -y agent-rack` or a local `node bin/agent-rack.js`.
 TEMPLATE
 

@@ -1,5 +1,5 @@
 {
-  "description": "Nudges Claude to start a Monitor watching newly-launched agent-rack background sessions (including background agent_review runs), so a human sees live progress without relying on the model remembering to do it.",
+  "description": "Nudges Claude to start a plain background shell that waits on newly-launched agent-rack background sessions (including background agent_review runs), so the result is collected without relying on the model remembering to poll — and without a streaming Monitor pushing every status change into the context window.",
   "hooks": {
     "PostToolUse": [
       {

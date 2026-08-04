@@ -50,12 +50,17 @@ set up one of the following.
 For anything that will run more than a couple of minutes, don't just wait for the user to ask —
 proactively surface progress:
 
-- **If a Monitor tool (or equivalent persistent background-shell mechanism) is available**, pair
-  `agent_session_create` with one that polls on an interval and reports only on change, mirroring
-  a PR-babysitting loop. This only works if agent-rack is reachable over `sse` transport with a
-  known URL (the mode `agent-rack dashboard` uses) — a Monitor script is a plain shell subprocess
-  and can't reach a `stdio`-registered server, since that connection is private to this
-  conversation. When it applies, use the CLI (not raw MCP calls, which a shell script can't make):
+- **If you can run a background shell**, pair `agent_session_create` with one that waits for the
+  session to reach a terminal state and then writes the result to a log file for you to read.
+  Prefer a plain background shell over a streaming monitor: a monitor turns every status change
+  into a conversation message, so a long session floods the context with a rising event count that
+  says nothing about what the sub-agent is doing, and a chatty one risks being rate-limited and
+  dropped. A background shell costs one notification. Point the user at
+  `watch -n5 'agent-rack session status <sessionId>'` if they want live output — in their terminal
+  it costs nothing. Either way this only works if agent-rack is reachable over `sse` transport with
+  a known URL (the mode `agent-rack dashboard` uses) — a shell subprocess can't reach a
+  `stdio`-registered server, since that connection is private to this conversation. When it
+  applies, use the CLI (not raw MCP calls, which a shell script can't make):
   - `agent-rack session status <sessionId> [--connect <url>]` — one diffable line (status,
     event count, summary). Cheap; use this as the change-detection trigger, same role `gh pr
     view` plays in a PR-babysitting loop.
