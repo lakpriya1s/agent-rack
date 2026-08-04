@@ -15,7 +15,7 @@ import { capabilitiesForAgent } from '../adapters/index.js';
 import { listAgentAvailability, isBinaryAvailable } from '../engine/availability.js';
 import { handleCpCommand, copySkills } from './skills.js';
 import { getPackageVersion } from './version.js';
-import { runSessionList, runSessionStatus, runSessionTail } from './session.js';
+import { runSessionList, runSessionStatus, runSessionTail, runSessionWatch } from './session.js';
 
 /**
  * Path to the executable as MCP clients must spell it. Resolved from `process.argv[1]` — the
@@ -801,6 +801,34 @@ export function runCLI() {
         process.exit(1);
       }
     });
+
+  // Registered twice on purpose: `agent-rack session watch` keeps the family together, and the
+  // top-level `agent-rack watch` is short enough to type from any terminal without looking it up.
+  const watchOptions = (cmd: Command): Command =>
+    cmd
+      .option('-c, --config <path>', 'Path to agent-rack.config.json')
+      .option('--connect <url>', 'URL of a running agent-rack SSE server (default: derived from config)')
+      .option('--interval <seconds>', 'Seconds between polls (default: 2)', (val) => parseInt(val, 10))
+      .option('--count <n>', 'Events of backlog to print before following (default: 10)', (val) =>
+        parseInt(val, 10)
+      )
+      .option('--json', 'Print one JSON event per line instead of compact lines')
+      .action(async (sessionId, options) => {
+        try {
+          await runSessionWatch(sessionId, options);
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(1);
+        }
+      });
+
+  const watchDescription =
+    'Follow a background session live, like `tail -f`: prints new output as the sub-agent ' +
+    'produces it and exits when the session finishes. With no sessionId, follows the newest ' +
+    'session. Run it from any terminal — it only needs a running SSE server';
+
+  watchOptions(sessionCmd.command('watch [sessionId]').description(watchDescription));
+  watchOptions(program.command('watch [sessionId]').description(watchDescription));
 
   sessionCmd
     .command('list')

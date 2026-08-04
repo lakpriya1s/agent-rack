@@ -50,17 +50,21 @@ set up one of the following.
 For anything that will run more than a couple of minutes, don't just wait for the user to ask —
 proactively surface progress:
 
+- **Tell the user they can follow it themselves**, in any terminal, with `agent-rack watch` (no
+  session id needed — it picks the newest session) or `agent-rack watch <sessionId>`. This is the
+  cheapest option by far and usually the right first answer: it streams live output in *their*
+  terminal and costs this conversation nothing.
 - **If you can run a background shell**, pair `agent_session_create` with one that waits for the
   session to reach a terminal state and then writes the result to a log file for you to read.
-  Prefer a plain background shell over a streaming monitor: a monitor turns every status change
-  into a conversation message, so a long session floods the context with a rising event count that
-  says nothing about what the sub-agent is doing, and a chatty one risks being rate-limited and
-  dropped. A background shell costs one notification. Point the user at
-  `watch -n5 'agent-rack session status <sessionId>'` if they want live output — in their terminal
-  it costs nothing. Either way this only works if agent-rack is reachable over `sse` transport with
-  a known URL (the mode `agent-rack dashboard` uses) — a shell subprocess can't reach a
-  `stdio`-registered server, since that connection is private to this conversation. When it
-  applies, use the CLI (not raw MCP calls, which a shell script can't make):
+  Prefer that over a streaming monitor: a monitor turns every status change into a conversation
+  message, so a long session floods the context with a rising event count that says nothing about
+  what the sub-agent is doing, and a chatty one risks being rate-limited and dropped. A background
+  shell costs one notification. Either way, a shell can only reach agent-rack over `sse` transport
+  with a known URL — a subprocess can't use a `stdio`-registered server, since that connection is
+  private to this conversation. When it applies, use the CLI (not raw MCP calls, which a shell
+  script can't make):
+  - `agent-rack watch <sessionId> [--connect <url>]` — follows the session and exits when it
+    finishes. In a background shell, redirect it to a log and read that once it exits.
   - `agent-rack session status <sessionId> [--connect <url>]` — one diffable line (status,
     event count, summary). Cheap; use this as the change-detection trigger, same role `gh pr
     view` plays in a PR-babysitting loop.

@@ -391,10 +391,9 @@ and examples.
 | `/agent-rack:agents` | `agent_list_available` | List configured agents and `$PATH` availability |
 | `/agent-rack:setup` | — | Verify the MCP server is actually connected; troubleshoot if not |
 
-The plugin also ships a `PostToolUse` hook (`plugins/agent-rack/hooks/`) with no command of its
-own: every time `agent_session_create` or a `*_run` shortcut launches a background session, it
-nudges Claude to start watching that session's status/tail live, instead of relying on the model
-remembering to check back. Nothing to configure — installing the plugin is enough.
+To watch a background session yourself rather than waiting to be told about it, use
+[`agent-rack watch`](#session-watch) from any terminal — it follows the newest session live, like
+`tail -f`.
 
 ### Guidance skills — 2, auto-activated
 
@@ -895,6 +894,41 @@ generating:
 
 `list` runs `status`'s formatting over every session tracked by the server. All three accept
 `--json` for the raw `AgentSessionInfo`/`ParsedAgentEvent` objects instead.
+
+<a id="session-watch"></a>
+
+### `watch`
+
+```sh
+agent-rack watch [sessionId] [--interval 2] [--count 10] [--connect <url>] [--json]
+agent-rack session watch [sessionId]     # same command, if you prefer the full path
+```
+
+`tail -f` for a background sub-agent. Prints a backlog, then streams each new event as the agent
+produces it, and exits on its own when the session finishes. **With no `sessionId` it follows the
+newest session** — the newest one still working if there is one, otherwise the newest overall — so
+right after launching a sub-agent from any MCP client you can just open a terminal anywhere on the
+system and type:
+
+```sh
+agent-rack watch
+```
+
+```
+following 4356e53a-e6d3-4acb-8b86-c1d4124c3a4c (opencode, running) — newest session
+[text] Reading src/adapters/claude.ts
+[tool_call:grep] getCLIArgs
+sessionId=4356e53a-… agent=opencode kind=task status=completed events=32 summary="…"
+```
+
+Unlike `status`/`tail`, which are one-shot and meant to be re-invoked by a polling script, `watch`
+holds the connection and does the polling itself, advancing by **cursor** rather than by count —
+so an agent producing output faster than the poll interval can't outrun it and have events
+skipped. A gap is reported explicitly (`[N event(s) dropped from the retained log]`) rather than
+passed off as complete. `Ctrl-C` closes the connection cleanly; the session keeps running.
+
+Same connection rules as `status`/`tail` above: it only attaches to an already-running SSE server
+and never starts one.
 
 ### `uninstall`
 
