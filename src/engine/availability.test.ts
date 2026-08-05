@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { getDefaultConfig } from '../config/loader.js';
-import { isBinaryAvailable, listAgentAvailability } from './availability.js';
+import { isBinaryAvailable, listAgentAvailability, locatorCommand } from './availability.js';
 
 describe('isBinaryAvailable', () => {
   it('finds a binary that is on $PATH', async () => {
@@ -9,6 +9,24 @@ describe('isBinaryAvailable', () => {
 
   it('reports a binary that is not on $PATH', async () => {
     expect(await isBinaryAvailable('definitely-not-a-real-binary-xyz')).toBe(false);
+  });
+});
+
+describe('locatorCommand', () => {
+  const originalPlatform = process.platform;
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+  });
+
+  it('uses `where` on win32, since `which` does not exist there', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    expect(locatorCommand()).toBe('where');
+  });
+
+  it('uses `which` on POSIX platforms', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    expect(locatorCommand()).toBe('which');
   });
 });
 

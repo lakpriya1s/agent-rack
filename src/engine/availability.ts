@@ -11,11 +11,21 @@ export interface AgentAvailability {
 }
 
 /**
+ * The shell command used to locate a binary on $PATH. `which` does not exist on native
+ * Windows (only under WSL/Git Bash), so probing with it there always throws ENOENT and every
+ * configured agent would be reported `missing_binary` regardless of whether it is installed.
+ * `where` is the built-in Windows equivalent.
+ */
+export function locatorCommand(): string {
+  return process.platform === 'win32' ? 'where' : 'which';
+}
+
+/**
  * Resolves whether `command` exists on the current $PATH.
  */
 export async function isBinaryAvailable(command: string): Promise<boolean> {
   try {
-    await execa('which', [command]);
+    await execa(locatorCommand(), [command]);
     return true;
   } catch {
     return false;
