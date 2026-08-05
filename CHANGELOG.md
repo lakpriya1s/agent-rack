@@ -5,6 +5,15 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.12.1
+
+### Fixed
+
+- **`isBinaryAvailable` reported every agent as `missing_binary` on native Windows.** It probed
+  `$PATH` by shelling out to `which`, which doesn't exist outside WSL/Git Bash, so the check
+  always threw `ENOENT` there regardless of whether the CLI was actually installed. It now uses
+  `where` on `win32` and `which` everywhere else.
+
 ## 0.12.0
 
 ### Added
