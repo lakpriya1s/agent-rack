@@ -391,9 +391,9 @@ and examples.
 | `/agent-rack:agents` | `agent_list_available` | List configured agents and `$PATH` availability |
 | `/agent-rack:setup` | — | Verify the MCP server is actually connected; troubleshoot if not |
 
-To watch a background session yourself rather than waiting to be told about it, use
-[`agent-rack watch`](#session-watch) from any terminal — it follows the newest session live, like
-`tail -f`.
+To watch background sessions yourself rather than waiting to be told about them, use
+[`agent-rack watch`](#session-watch) from any terminal — with no arguments it attaches to the
+server and streams every sub-agent that runs, live, like `tail -f`.
 
 ### Guidance skills — 2, auto-activated
 
@@ -901,25 +901,38 @@ generating:
 
 ```sh
 agent-rack watch [sessionId] [--interval 2] [--count 10] [--connect <url>] [--json]
-agent-rack session watch [sessionId]     # same command, if you prefer the full path
+agent-rack watch --exit-when-idle          # stop once everything it followed has finished
+agent-rack session watch [sessionId]       # same command, if you prefer the full path
 ```
 
 `tail -f` for a background sub-agent. Prints a backlog, then streams each new event as the agent
-produces it, and exits on its own when the session finishes. **With no `sessionId` it follows the
-newest session** — the newest one still working if there is one, otherwise the newest overall — so
-right after launching a sub-agent from any MCP client you can just open a terminal anywhere on the
-system and type:
+produces it. Given a `sessionId` it follows that one session and exits when it finishes.
+
+**With no `sessionId` it attaches to the server instead of to a session**, and follows every
+sub-agent that runs there — including ones started later, and several at once. So you can leave it
+running in a spare terminal *before* anything exists, and it will pick up whatever your MCP client
+launches:
 
 ```sh
 agent-rack watch
 ```
 
 ```
-following 4356e53a-e6d3-4acb-8b86-c1d4124c3a4c (opencode, running) — newest session
-[text] Reading src/adapters/claude.ts
-[tool_call:grep] getCLIArgs
+waiting for a sub-agent session on http://127.0.0.1:8987/sse — Ctrl-C to stop
+following opencode:4356e53a (running, /Volumes/External/agent-mcp)
+opencode:4356e53a [text] Reading src/adapters/claude.ts
+following codex:9b1f77c2 (running, /Volumes/External/agent-mcp)
+opencode:4356e53a [tool_call:grep] getCLIArgs
+codex:9b1f77c2 [text] Checking the review contract
 sessionId=4356e53a-… agent=opencode kind=task status=completed events=32 summary="…"
 ```
+
+Each line is prefixed `<agent>:<short session id>` so concurrent agents stay tellable apart
+(`--json` adds a `sessionId` field to every event for the same reason). An empty server is a wait,
+not an end state: it keeps listening while idle, before the first session and after the last one
+finishes. `--exit-when-idle` opts out, for a script that wants it to return once the runs it
+followed are done. Sessions that had already finished *before* `watch` started are not replayed —
+it reports how many it ignored, and you can pass one's `sessionId` to see it.
 
 Unlike `status`/`tail`, which are one-shot and meant to be re-invoked by a polling script, `watch`
 holds the connection and does the polling itself, advancing by **cursor** rather than by count —
@@ -1063,7 +1076,8 @@ from. [Configuration](#configuration) is only for changing that.
 
 **Can I run several sub-agents at once?** Yes — that's what `agent_session_create` is for.
 Concurrency is capped by `security.maxConcurrentSessions` (default `5`), and you can watch every
-running session from the [terminal dashboard](#dashboard-alias-ui) or
+running session from the [terminal dashboard](#dashboard-alias-ui), as one interleaved stream with
+[`agent-rack watch`](#session-watch), or a line at a time with
 [`agent-rack session`](#session-status--session-tail--session-list).
 
 **Is this a sandbox?** No, and it's important not to read it as one.

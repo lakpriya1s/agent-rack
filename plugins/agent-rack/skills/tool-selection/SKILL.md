@@ -51,9 +51,10 @@ For anything that will run more than a couple of minutes, don't just wait for th
 proactively surface progress:
 
 - **Tell the user they can follow it themselves**, in any terminal, with `agent-rack watch` (no
-  session id needed — it picks the newest session) or `agent-rack watch <sessionId>`. This is the
-  cheapest option by far and usually the right first answer: it streams live output in *their*
-  terminal and costs this conversation nothing.
+  session id needed — it attaches to the server and streams every session, including concurrent
+  ones and ones started later, and keeps waiting while idle) or `agent-rack watch <sessionId>` for
+  one specific session. This is the cheapest option by far and usually the right first answer: it
+  streams live output in *their* terminal and costs this conversation nothing.
 - **If you can run a background shell**, pair `agent_session_create` with one that waits for the
   session to reach a terminal state and then writes the result to a log file for you to read.
   Prefer that over a streaming monitor: a monitor turns every status change into a conversation

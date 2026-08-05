@@ -233,6 +233,23 @@ recent event content (what the sub-agent is actually generating) once a change i
 deliberately two separate calls rather than one combined command, since polling should stay
 cheap and only fetch content when something changed.
 
+The same file owns `agent-rack watch` (also `agent-rack session watch`), which does the polling
+itself instead of being re-invoked, and has **two shapes with different exit rules**:
+- `watch <sessionId>` follows that one session and returns when it settles.
+- `watch` with no id follows the *server*: it polls `agent_session_list`, starts following every
+  session it has not seen, and keeps waiting when nothing is running — before the first session
+  and after the last one finishes — because a user who cannot name a session is usually watching
+  a terminal they opened *before* launching anything. `--exit-when-idle` opts out, for scripts.
+  Lines are prefixed `<agentId>:<first 8 of sessionId>` (`--json` adds a `sessionId` field
+  instead), since several agents interleave on one stream. Sessions already terminal on the first
+  poll are reported as a count rather than replayed — otherwise a server's whole history dumps
+  ahead of the run being waited on; `classifyWatchSessions` is where that first-poll rule lives.
+
+Each followed session carries its own monotonic cursor, so a busy agent cannot outrun the poll
+interval. `drainSession` reads status *before* draining (so a session that settles between the two
+calls still gets its final events printed) but prints a *terminal* status line after them, so the
+closing line sits below the output it summarises.
+
 **cli/dashboard/** — An ink/React TUI (`.tsx` components, `jsx: react-jsx`). Its defining
 property: the dashboard is an MCP **client**, never an owner of session state. It holds no
 `SessionManager`; `remoteClient.ts` (`DashboardRemoteClient`) wraps an SSE MCP client and turns

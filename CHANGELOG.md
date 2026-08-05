@@ -5,6 +5,42 @@ All notable changes to agent-rack are documented here.
 This project is pre-1.0: minor versions may contain breaking changes, and they are called out
 explicitly below.
 
+## 0.12.0
+
+### Added
+
+- **`agent-rack watch` follows the whole server, not one session.** With no `sessionId` it attaches
+  to a running SSE server and streams *every* sub-agent that runs there — several concurrently, and
+  ones started after it — so it can be left running in a spare terminal before anything exists.
+  Each line is prefixed `<agentId>:<first 8 of sessionId>` (`--json` adds a `sessionId` field to
+  every event instead), because concurrent agents interleave on one stream.
+- **An empty server is a wait, not an end state.** `watch` keeps listening while idle, both before
+  the first session and after the last one finishes; previously it printed `No sessions tracked by
+  the agent-rack server at <url>` and exited, which is exactly the moment someone who just opened a
+  terminal needs it to stay. `--exit-when-idle` opts out, for a script that wants it to return once
+  the runs it followed are done.
+- **`agent-rack watch` / `agent-rack session watch` itself** (introduced in 0.11.2, undocumented
+  here): `tail -f` for a background sub-agent. It holds the connection and polls for you, unlike
+  the one-shot `session status`/`session tail`, advancing by **cursor** rather than by count — so an
+  agent producing output faster than the poll interval cannot outrun it and have events skipped,
+  and a real gap is reported (`[N event(s) dropped from the retained log]`) instead of passed off as
+  complete. `Ctrl-C` closes the connection; the session keeps running.
+
+### Changed
+
+- **`watch` with no `sessionId` no longer means "the newest session".** It now means "everything on
+  this server", so `pickWatchTarget` is gone in favour of `classifyWatchSessions`. Sessions that had
+  already finished when `watch` started are *not* replayed — a server's whole history would bury the
+  run being waited on — so it reports how many it ignored and you can pass one's `sessionId` to see
+  it. A session that starts *and* finishes inside one poll interval is still shown in full.
+- **A terminal status line now prints below that session's final events**, not above them. Status is
+  still read before draining, so a session that settles between the two calls keeps its last
+  events; only the closing line moved.
+- The plugin's `PostToolUse` monitor-nudge hook is gone (0.11.2). It asked the model to babysit each
+  background session from inside the conversation, which either flooded the context window or went
+  silent until the run was over; `agent-rack watch` puts that output in the user's own terminal for
+  free. `tool-selection` now offers it as the first answer when someone wants to see progress.
+
 ## 0.11.0
 
 ### Added

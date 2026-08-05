@@ -813,6 +813,10 @@ export function runCLI() {
         parseInt(val, 10)
       )
       .option('--json', 'Print one JSON event per line instead of compact lines')
+      .option(
+        '--exit-when-idle',
+        'With no sessionId, exit once every followed session has finished instead of waiting for the next one'
+      )
       .action(async (sessionId, options) => {
         try {
           await runSessionWatch(sessionId, options);
@@ -823,9 +827,11 @@ export function runCLI() {
       });
 
   const watchDescription =
-    'Follow a background session live, like `tail -f`: prints new output as the sub-agent ' +
-    'produces it and exits when the session finishes. With no sessionId, follows the newest ' +
-    'session. Run it from any terminal — it only needs a running SSE server';
+    'Follow background sub-agents live, like `tail -f`. With a sessionId, follows that session ' +
+    'and exits when it finishes. With no sessionId, stays attached to the server and follows ' +
+    'every session as it starts — including several at once, and including agents launched ' +
+    'later — so it can be left running before anything exists. Run it from any terminal — it ' +
+    'only needs a running SSE server';
 
   watchOptions(sessionCmd.command('watch [sessionId]').description(watchDescription));
   watchOptions(program.command('watch [sessionId]').description(watchDescription));
